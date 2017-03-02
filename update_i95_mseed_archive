@@ -1,0 +1,142 @@
+#!/usr/bin/env python
+import os
+import sys
+import warnings
+
+import matplotlib
+matplotlib.use("AGG")
+
+import numpy as np
+
+from obspy import UTCDateTime
+from obspy.clients.filesystem.sds import Client as SDSClient
+from obspy.clients.fdsn import Client as FDSNClient
+from obspy.clients.fdsn.header import FDSNException
+
+
+STREAMS = ["EH", "HH", "EL"]
+COMPONENTS = "ZNE123"
+
+# length of analysis window in minutes
+WINDOW_LENGTH_MINUTES = 10
+WINDOW_LENGTH = WINDOW_LENGTH_MINUTES * 60
+# length of buffer before start / after end for preprocessing,
+# cut off before analysis, in seconds
+BUFFER_LENGTH = 1 * 60
+# instrument correction parameters
+WATER_LEVEL = 10
+PRE_FILT = (0.05, 0.1, 50, 60)
+FILTER_PARAMETERS = {
+    'type': "bandpass",
+    'freqmin': 0.5,
+    'freqmax': 30,
+    'corners': 4,
+    'zerophase': False,
+    }
+
+OVERWRITE = True
+SDS_ROOT_MSEED = "/bay200/mseed_online/archive"
+SDS_ROOT_I95 = "/bay200/I95_0.5-30Hz"
+FDSN_BASE_URL = "http://jane.geophysik.uni-muenchen.de"
+
+
+if len(sys.argv) != 2:
+    msg = ('Specify a single day to process (e.g. 2016-032 or 2016-01-06).')
+    raise Exception(msg)
+
+t = UTCDateTime(sys.argv[1])
+# work on the full day of the given timestamp
+T1 = UTCDateTime(t.strftime("%Y-%j"))
+T2 = T1 + 24 * 3600
+
+
+sds_client_mseed = SDSClient(SDS_ROOT_MSEED)
+fdsn_client = FDSNClient(FDSN_BASE_URL)
+sds_client_npy = SDSClient(SDS_ROOT_I95)
+sds_client_npy.FMTSTR += ".npy"
+
+nslc = [(n, s, l, c)
+        for (n, s, l, c) in sds_client_mseed.get_all_nslc(datetime=T1)
+        if c[:2] in STREAMS and c[2] in COMPONENTS]
+
+for net, sta, loc, cha in nslc:
+    npy_file = sds_client_npy._get_filename(
+        net, sta, loc, cha, T1)
+
+    if not OVERWRITE and os.path.exists(npy_file):
+        msg = ("Outfile exists, skipping: {}").format(npy_file)
+        warnings.warn(msg)
+        continue
+
+    inv = None
+    try:
+        inv = fdsn_client.get_stations(
+            network=net, station=sta, location=loc, channel=cha,
+            level="response")
+    except FDSNException as e:
+        msg = ("Failed to fetch station metadata for {}.{}.{}.{}: "
+               "{}").format(net, sta, loc, cha, str(e))
+        warnings.warn(msg)
+        continue
+
+    # using uint32 for POSIX timestamp means we are limited to range
+    # 1970-01-01 -- 2106-02-07 and timing resolution is limited to seconds but
+    # it saves space, otherwise we would need float64
+    times = np.arange(T1.timestamp, T2.timestamp, WINDOW_LENGTH,
+                      dtype=np.uint32)
+    data = np.zeros(
+        len(times), dtype=[('time', np.uint32), ('i95', np.float32),
+                           ('vrms', np.float32), ('coverage', np.uint8)])
+    data['time'] = times
+
+    for i, t in enumerate(times):
+        data_ = []
+        t1 = UTCDateTime(t - (WINDOW_LENGTH / 2.0) - BUFFER_LENGTH)
+        t2 = UTCDateTime(t + (WINDOW_LENGTH / 2.0) + BUFFER_LENGTH)
+        st = sds_client_mseed.get_waveforms(net, sta, loc, cha, t1, t2)
+        # cleanup merge..
+        st.merge(-1)
+        # now throw away gaps..
+        st.merge(0, fill_value=None)
+        st = st.split()
+        # omit traces that are less than twice the buffer length and thus
+        # can not be processed..
+        st.traces = [
+            tr for tr in st if
+            (tr.stats.endtime - tr.stats.starttime) > 2 * BUFFER_LENGTH]
+        if not st:
+            data['i95'][i] = np.nan
+            data['vrms'][i] = np.nan
+            data['coverage'][i] = 0
+            continue
+        for tr in st:
+            tr.taper(type="cosine", max_percentage=None,
+                     max_length=BUFFER_LENGTH, side="both")
+            tr.remove_response(
+                inventory=inv, output="VEL", water_level=WATER_LEVEL,
+                pre_filt=PRE_FILT, zero_mean=False, taper=False)
+            tr.filter(**FILTER_PARAMETERS)
+            tr.detrend("demean")
+            tr.trim(starttime=tr.stats.starttime + BUFFER_LENGTH,
+                    endtime=tr.stats.endtime - BUFFER_LENGTH)
+            data_.append(np.abs(tr.data) * 1e9)  # work in nm/s
+        coverage_ = 0
+        for tr in st:
+            coverage_ += (
+                tr.stats.endtime - tr.stats.starttime) / WINDOW_LENGTH
+        data_ = np.concatenate(data_)
+        data['i95'][i] = np.percentile(data_, 95)
+        data['vrms'][i] = np.sqrt(np.sum((data_ ** 2) / len(data_)))
+        # save coverage in percent
+        data['coverage'][i] = round(coverage_ * 100)
+
+    outdir = os.path.dirname(npy_file)
+    if not os.path.isdir(outdir):
+        os.makedirs(outdir)
+    np.save(npy_file, data)
+    with open(npy_file.rsplit('.', 1)[0] + '.log', 'wt') as fh:
+        fh.write('Window length: {:d}s\n'.format(WINDOW_LENGTH))
+        fh.write('Buffer length: {:d}s\n'.format(BUFFER_LENGTH))
+        fh.write('Water level: {:f}\n'.format(WATER_LEVEL))
+        fh.write('Pre filter: {!s}\n'.format(PRE_FILT))
+        fh.write('Filter parameters: {!s}\n'.format(FILTER_PARAMETERS))
