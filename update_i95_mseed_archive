@@ -49,6 +49,10 @@ t = UTCDateTime(sys.argv[1])
 T1 = UTCDateTime(t.strftime("%Y-%j"))
 T2 = T1 + 24 * 3600
 
+if T1 >= UTCDateTime():
+    msg = 'Skipping timestamp in the future ({!s})'.format(T1)
+    raise Exception(msg)
+
 
 sds_client_mseed = SDSClient(SDS_ROOT_MSEED)
 fdsn_client = FDSNClient(FDSN_BASE_URL)
