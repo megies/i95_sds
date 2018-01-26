@@ -396,9 +396,6 @@ def main(argv=None):
                 continue
             coverage_ = 0
             for tr in st:
-                coverage_ += (
-                    tr.stats.endtime - tr.stats.starttime) / window_length
-            for tr in st:
                 tr.taper(type="cosine", max_percentage=None,
                          max_length=buffer_length, side="both")
                 tr.remove_response(
@@ -408,6 +405,8 @@ def main(argv=None):
                     tr.filter(**filter_kwargs)
                 tr.detrend("demean")
                 tr.trim(starttime=t1, endtime=t2)
+                coverage_ += (
+                    tr.stats.endtime - tr.stats.starttime) / window_length
                 data_.append(np.abs(tr.data) * 1e9)  # work in nm/s
             data_ = np.concatenate(data_)
             data['i95'][i] = np.percentile(data_, 95)
