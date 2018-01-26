@@ -112,7 +112,7 @@ def _write_result_npy(filename, data):
     outdir = os.path.dirname(filename)
     if not os.path.isdir(outdir):
         os.makedirs(outdir)
-    if np.all(data['coverage'] == 0) and np.all(data['i95'] == np.nan):
+    if np.all(data['coverage'] == 0) and np.all(np.isnan(data['i95'])):
         # on empty data, write file with only content '0'
         # (would be easier to just touch an empty file but that could
         #  potentially be mixed up / mask other problems like file opening
