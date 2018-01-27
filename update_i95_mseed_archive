@@ -297,7 +297,7 @@ def main(argv=None):
 
     # time-of-day in nanoseconds to represent times corresponding to I95 values
     times = np.arange(t._ns, t_end._ns,
-            int(window_length * 1e9), dtype=np.int64)[:15]
+            int(window_length * 1e9), dtype=np.int64)
     times_of_day = times - t._ns
 
     # now check if processing is compatible with what is stored in I95 SDS
