@@ -245,15 +245,16 @@ def main(argv=None):
     else:
         pre_filt = list(float(value) for value in args.pre_filt.split(','))
     if args.filter_type.upper() == 'NONE':
-        use_filter = True
+        use_filter = False
         filter_kwargs = {'type': None}
     else:
-        use_filter = False
+        use_filter = True
         filter_kwargs = {'type': args.filter_type}
     for key in ('filter_freq', 'filter_freqmin', 'filter_freqmax',
                 'filter_corners'):
         value = getattr(args, key, None)
         if value is not None:
+            key = key.split('_', 1)[1]
             filter_kwargs[key] = value
     filter_kwargs['zerophase'] = args.filter_zerophase
 
@@ -396,15 +397,23 @@ def main(argv=None):
                 continue
             coverage_ = 0
             for tr in st:
+                tr.detrend("demean")
                 tr.taper(type="cosine", max_percentage=None,
-                         max_length=buffer_length, side="both")
+                         max_length=buffer_length * 0.8, side="both")
                 tr.remove_response(
                     inventory=inv, output="VEL", water_level=water_level,
                     pre_filt=pre_filt, zero_mean=False, taper=False)
                 if use_filter:
                     tr.filter(**filter_kwargs)
                 tr.detrend("demean")
-                tr.trim(starttime=t1, endtime=t2)
+                # make sure that tapered parts are removed. for traces that do
+                # not fully span the expected window (gappy data), we need to
+                # cut away part of the actual data window to avoid having
+                # tapered data in the I95 calculation (which would lead to
+                # artificially lowered I95 for gappy data)
+                trim_start = max(t1, tr.stats.starttime + buffer_length)
+                trim_end = min(t2, tr.stats.endtime - buffer_length)
+                tr.trim(starttime=trim_start, endtime=trim_end)
                 coverage_ += (
                     tr.stats.endtime - tr.stats.starttime) / window_length
                 data_.append(np.abs(tr.data) * 1e9)  # work in nm/s
