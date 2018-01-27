@@ -123,6 +123,16 @@ def _write_result_npy(filename, data):
         np.save(filename, data)
 
 
+def _plot_debug_image(t, i, tr, label, sds_root_i95):
+    t = UTCDateTime(ns=t)
+    directory = os.path.join(sds_root_i95, 'debug', tr.id, t.strftime("%Y-%j"))
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    filename = os.path.join(directory, '{!s}_{!s}_{}.png'.format(
+        t, i, label))
+    tr.plot(outfile=filename)
+
+
 def main(argv=None):
     parser = ArgumentParser(
         prog='update_i95_mseed_archive', description=__doc__.strip(),
@@ -177,6 +187,10 @@ def main(argv=None):
         '-v', '--verbose', dest='verbose', default=False,
         action="store_true",
         help='Print verbose output while processing files.')
+    options.add_argument(
+        '--debug', dest='debug', default=False,
+        action="store_true",
+        help='Plot images to files in /tmp during processing.')
 
     options = parser.add_argument_group(
         '(Pre-)Processing Options', 'Settings regarding the details of '
@@ -234,6 +248,7 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
     verbose = args.verbose
+    debug = args.debug
     window_length = args.window_length_minutes * 60
     buffer_length = args.buffer_length
     if args.water_level.upper() == 'NONE':
@@ -307,7 +322,8 @@ def main(argv=None):
     sds_client_npy.FMTSTR += ".npy"
 
     if verbose:
-        print('Fetching station inventory summary from FDSN client... ', end='')
+        print('Fetching station inventory summary from FDSN client... ',
+              end='')
     inv_all = fdsn_client.get_stations(
         level='channel', format='text', starttime=t - 100, endtime=t_end + 100)
     if verbose:
@@ -334,7 +350,7 @@ def main(argv=None):
             ('.'.join(nslc_) for nslc_ in nslc)))
         print('-' * 70)
 
-    def _process(net, sta, loc, cha, t, verbose=verbose):
+    def _process(net, sta, loc, cha, t, verbose=verbose, debug=debug):
         npy_file = sds_client_npy._get_filename(
             net, sta, loc, cha, t)
 
@@ -396,15 +412,23 @@ def main(argv=None):
                 data['coverage'][i] = 0
                 continue
             coverage_ = 0
-            for tr in st:
+            for i, tr in enumerate(st):
+                if debug:
+                    _plot_debug_image(t_, i, tr, '0_raw', args.sds_root_i95)
                 tr.detrend("demean")
                 tr.taper(type="cosine", max_percentage=None,
                          max_length=buffer_length * 0.8, side="both")
                 tr.remove_response(
                     inventory=inv, output="VEL", water_level=water_level,
                     pre_filt=pre_filt, zero_mean=False, taper=False)
+                if debug:
+                    _plot_debug_image(t_, i, tr, '1_deconvolved',
+                                      args.sds_root_i95)
                 if use_filter:
                     tr.filter(**filter_kwargs)
+                if debug:
+                    _plot_debug_image(t_, i, tr, '2_filtered',
+                                      args.sds_root_i95)
                 tr.detrend("demean")
                 # make sure that tapered parts are removed. for traces that do
                 # not fully span the expected window (gappy data), we need to
@@ -414,6 +438,9 @@ def main(argv=None):
                 trim_start = max(t1, tr.stats.starttime + buffer_length)
                 trim_end = min(t2, tr.stats.endtime - buffer_length)
                 tr.trim(starttime=trim_start, endtime=trim_end)
+                if debug:
+                    _plot_debug_image(t_, i, tr, '3_trimmed',
+                                      args.sds_root_i95)
                 coverage_ += (
                     tr.stats.endtime - tr.stats.starttime) / window_length
                 data_.append(np.abs(tr.data) * 1e9)  # work in nm/s
