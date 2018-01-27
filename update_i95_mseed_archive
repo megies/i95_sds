@@ -5,6 +5,8 @@ metadata and store it in SDS structure in npy format.
 """
 from __future__ import print_function
 import json
+import logging
+import logging.handlers
 import os
 import pprint
 import sys
@@ -191,6 +193,10 @@ def main(argv=None):
         '--debug', dest='debug', default=False,
         action="store_true",
         help='Plot images to files in /tmp during processing.')
+    options.add_argument(
+        '--logfile-suffix', dest='logfile_suffix', default='', type=str,
+        help='Suffix for filename of log file (to log multiple simultaneous '
+             'program runs to separate files).')
 
     options = parser.add_argument_group(
         '(Pre-)Processing Options', 'Settings regarding the details of '
@@ -284,11 +290,6 @@ def main(argv=None):
     year_day_string = t.strftime("%Y-%j")
     t = UTCDateTime(year_day_string)
     t_end = t + 24 * 3600
-    if verbose:
-        print('#' * 70)
-        print('#' * 70)
-        print('Processing ' + year_day_string)
-        print('#' * 70)
 
     if t >= UTCDateTime():
         msg = 'Time to process is in the future ({!s})'.format(t)
@@ -296,38 +297,59 @@ def main(argv=None):
 
     # time-of-day in nanoseconds to represent times corresponding to I95 values
     times = np.arange(t._ns, t_end._ns,
-                      int(window_length * 1e9), dtype=np.int64)
+            int(window_length * 1e9), dtype=np.int64)[:15]
     times_of_day = times - t._ns
 
     # now check if processing is compatible with what is stored in I95 SDS
     if os.path.exists(args.sds_root_i95):
-        if verbose:
-            print('Sanity checking existing I95 SDS root at {}... '.format(
-                args.sds_root_i95), end='')
         _sanity_check_i95_root(args.sds_root_i95, params, times_of_day)
-        if verbose:
-            print('done.')
+        msg = 'Sanity checked existing I95 SDS root at {}'.format(
+            args.sds_root_i95)
     else:
-        if verbose:
-            print('Creating new I95 SDS root at ' + args.sds_root_i95)
         _setup_new_i95_root(args.sds_root_i95, params, times_of_day)
+        msg = 'Created new I95 SDS root at ' + args.sds_root_i95
 
+    # set up logger
+    if args.logfile_suffix:
+        log_filename = 'log_{}.txt'.format(args.logfile_suffix)
+    else:
+        log_filename = 'log.txt'
+    global logger
+    logger = logging.getLogger()
+    if debug:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
+    handler = logging.handlers.RotatingFileHandler(
+        os.path.join(args.sds_root_i95, log_filename), maxBytes=10e6)
+    formatter = logging.Formatter('%(asctime)s %(levelname)-8s %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+    logger.info(msg)
     if verbose:
-        print('Connecting SDS/FDSN clients... ', end='')
+        print(msg)
+
+    msg = 'Processing ' + year_day_string
+    logger.info(msg)
+    if verbose:
+        print(msg)
+
     sds_client_mseed = SDSClient(args.sds_root_waveforms)
     fdsn_client = FDSNClient(args.fdsn_base_url)
     sds_client_npy = SDSClient(args.sds_root_i95)
-    if verbose:
-        print('done')
     sds_client_npy.FMTSTR += ".npy"
-
+    msg = 'Connected SDS/FDSN clients.'
+    logger.info(msg)
     if verbose:
-        print('Fetching station inventory summary from FDSN client... ',
-              end='')
+        print(msg)
+
     inv_all = fdsn_client.get_stations(
         level='channel', format='text', starttime=t - 100, endtime=t_end + 100)
+    msg = 'Fetched station inventory summary from FDSN client.'
+    logger.info(msg)
     if verbose:
-        print('done')
+        print(msg)
 
     # replaced because it is so slow..
     #  .. lookup SEED codes from fetched bare inventory
@@ -345,26 +367,27 @@ def main(argv=None):
                 if cha.code[2] not in args.component_codes:
                     continue
                 nslc.add((net.code, sta.code, cha.location_code, cha.code))
+    msg = 'Processing the following SEED IDs: ' + ' '.join(
+        ('.'.join(nslc_) for nslc_ in nslc))
+    logger.info(msg)
     if verbose:
-        print('Processing the following SEED IDs:\n  ' + '\n  '.join(
-            ('.'.join(nslc_) for nslc_ in nslc)))
-        print('-' * 70)
+        print(msg)
 
     def _process(net, sta, loc, cha, t, verbose=verbose, debug=debug):
+        global logger
         npy_file = sds_client_npy._get_filename(
             net, sta, loc, cha, t)
 
         if not args.overwrite and os.path.exists(npy_file):
+            msg = ("Outfile exists and overwrite option not specified, "
+                   "skipping: {}".format(npy_file))
+            logger.info(msg)
             if verbose:
-                print("Outfile exists and overwrite option not specified, "
-                      "skipping: {}".format(npy_file))
+                print(msg)
             return
 
         inv = None
         try:
-            if verbose:
-                print('Fetching response information from FDSN client... ',
-                      end='')
             inv = fdsn_client.get_stations(
                 network=net, station=sta, location=loc, channel=cha,
                 level="response", starttime=t - 100, endtime=t_end + 100)
@@ -373,16 +396,20 @@ def main(argv=None):
                 print('failed!')
             msg = ("Failed to fetch station metadata for '{}': "
                    "{}").format('.'.join(net, sta, loc, cha), str(e))
+            logger.error(msg)
             warnings.warn(msg)
             return
-        else:
-            if verbose:
-                print('done.')
+        msg = ('Fetched response information from FDSN client.')
+        logger.info(msg)
+        if verbose:
+            print(msg)
 
         data = np.zeros(len(times), dtype=DTYPE)
 
+        msg = '{} windows to process'.format(len(times))
+        logger.info(msg)
         if verbose:
-            print('{} windows to process: '.format(len(times)), end='')
+            print(msg + ': ', end='')
         for i, t_ in enumerate(times):
             if verbose:
                 if verbose and i % 5 == 0:
@@ -412,9 +439,9 @@ def main(argv=None):
                 data['coverage'][i] = 0
                 continue
             coverage_ = 0
-            for i, tr in enumerate(st):
+            for j, tr in enumerate(st):
                 if debug:
-                    _plot_debug_image(t_, i, tr, '0_raw', args.sds_root_i95)
+                    _plot_debug_image(t_, j, tr, '0_raw', args.sds_root_i95)
                 tr.detrend("demean")
                 tr.taper(type="cosine", max_percentage=None,
                          max_length=buffer_length * 0.8, side="both")
@@ -422,12 +449,12 @@ def main(argv=None):
                     inventory=inv, output="VEL", water_level=water_level,
                     pre_filt=pre_filt, zero_mean=False, taper=False)
                 if debug:
-                    _plot_debug_image(t_, i, tr, '1_deconvolved',
+                    _plot_debug_image(t_, j, tr, '1_deconvolved',
                                       args.sds_root_i95)
                 if use_filter:
                     tr.filter(**filter_kwargs)
                 if debug:
-                    _plot_debug_image(t_, i, tr, '2_filtered',
+                    _plot_debug_image(t_, j, tr, '2_filtered',
                                       args.sds_root_i95)
                 tr.detrend("demean")
                 # make sure that tapered parts are removed. for traces that do
@@ -439,7 +466,7 @@ def main(argv=None):
                 trim_end = min(t2, tr.stats.endtime - buffer_length)
                 tr.trim(starttime=trim_start, endtime=trim_end)
                 if debug:
-                    _plot_debug_image(t_, i, tr, '3_trimmed',
+                    _plot_debug_image(t_, j, tr, '3_trimmed',
                                       args.sds_root_i95)
                 coverage_ += (
                     tr.stats.endtime - tr.stats.starttime) / window_length
@@ -458,10 +485,11 @@ def main(argv=None):
 
     total = len(nslc)
     for i, (net, sta, loc, cha) in enumerate(sorted(nslc)):
+        msg = 'Processing SEED ID {}  ({!s}/{!s})'.format(
+            '.'.join((net, sta, loc, cha)), i+1, total)
+        logger.info(msg)
         if verbose:
-            print('-' * 70)
-            print('Processing SEED ID {}  ({!s}/{!s})'.format(
-                '.'.join((net, sta, loc, cha)), i+1, total))
+            print(msg)
         _process(net, sta, loc, cha, t, verbose=verbose)
 
 
