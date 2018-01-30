@@ -59,55 +59,64 @@ I95_PARAM_FILENAME = 'parameters.json'
 I95_TIMES_FILENAME = 'times.npy'
 
 
+EXAMPLE_PARAMETERS_JSON = """
+{
+    "buffer_length": 120,
+    "fdsn_base_url": "http://jane",
+    "filter_kwargs": {
+        "corners": 4,
+        "freqmax": 20.0,
+        "freqmin": 1.0,
+        "type": "bandpass",
+        "zerophase": false
+    },
+    "pre_filt": [
+        0.05,
+        0.1,
+        50.0,
+        60.0
+    ],
+    "sds_root_waveforms": "/bay200/mseed_online/archive",
+    "water_level": 10.0,
+    "window_length_minutes": 10
+}
+"""
+
+
 def _string_format_params(params):
     return "  " + "\n  ".join(pprint.pformat(params).splitlines())
 
 
-def _setup_new_i95_root(directory, params, times):
-    # create dir
-    os.makedirs(directory)
-    # make info files in I95 SDS root read-only for everybody
-    old_umask = os.umask(0222)
-    try:
-        # store parameter settings
-        json_string = json.dumps(params, ensure_ascii=True, indent=4,
-                                 encoding='ASCII', sort_keys=True)
-        i95_param_file = os.path.join(directory, I95_PARAM_FILENAME)
-        with open(i95_param_file, 'wb') as fh:
-            fh.write(json_string.encode('ASCII'))
-        # store times as plain ndarray in npy
-        i95_times_file = os.path.join(directory, I95_TIMES_FILENAME)
-        np.save(i95_times_file, times)
-        # set these files read-only for everybody
-    finally:
-        os.umask(old_umask)
-
-
-def _sanity_check_i95_root(directory, params, times):
-    # check directory
-    if not os.path.isdir(directory):
-        msg = ('I95 SDS root exists and is no directory')
-        raise IOError(msg)
-    # assert equality of processing parameters
-    with open(os.path.join(directory, I95_PARAM_FILENAME), 'rb') as fh:
+def _get_metadata_from_i95_root(directory):
+    i95_param_file = os.path.join(directory, I95_PARAM_FILENAME)
+    i95_times_file = os.path.join(directory, I95_TIMES_FILENAME)
+    # read processing parameters
+    with open(i95_param_file, 'rb') as fh:
         json_string = fh.read().decode('ASCII')
-    params_expected = json.loads(json_string, encoding='ASCII')
-    if params != params_expected:
+    params = json.loads(json_string, encoding='ASCII')
 
-        msg = ('Processing parameters do not match processing parameters '
-               'stored in I95 SDS root.\n Expected:\n{expected}\n Got:\n{got}')
-        msg = msg.format(expected=_string_format_params(params_expected),
-                         got=_string_format_params(params))
-        raise Exception(msg)
-    # assert equality of times (of day) corresponding to the stored I95 values
-    times_expected = np.load(os.path.join(directory, I95_TIMES_FILENAME))
-    try:
-        np.testing.assert_array_equal(times_expected, times)
-    except AssertionError as e:
-        msg = ('Times (of day) of to-be-stored I95 data does not match the '
-               'expected times stored in I95 SDS root:\n{}')
-        msg = msg.format(str(e))
-        raise Exception()
+    # read times-of-day
+    if os.path.exists(i95_times_file):
+        times_of_day = np.load(i95_times_file)
+    # or create and also write them to file if not present
+    else:
+        # arbitrary date.. we only create times-of-day anyway
+        t = UTCDateTime(2017, 1, 1)
+        # time-of-day in nanoseconds to represent times corresponding to I95
+        # values
+        times = np.arange(t._ns, (t + 24 * 3600)._ns,
+                          int(params['window_length_minutes'] * 60 * 1e9),
+                          dtype=np.int64)
+        times_of_day = times - t._ns
+        # make info files in I95 SDS root read-only for everybody
+        old_umask = os.umask(0222)
+        try:
+            # store times as plain ndarray in npy
+            np.save(i95_times_file, times_of_day)
+        finally:
+            os.umask(old_umask)
+
+    return params, times_of_day
 
 
 def _write_result_npy(filename, data):
@@ -146,19 +155,19 @@ def main(argv=None):
     options.add_argument(
         '-t', '--time', dest='time', required=True,
         help='Year and day to process (e.g. "2017-12-24" or "2017-365").')
-    options.add_argument(
-        '--sds-root-waveforms', dest='sds_root_waveforms', required=True,
-        type=str,
-        help='Root directory of the SDS directory structure containing the '
-             'waveform data (should contain subdirectories with years).')
+    # options.add_argument(
+    #     '--sds-root-waveforms', dest='sds_root_waveforms', required=True,
+    #     type=str,
+    #     help='Root directory of the SDS directory structure containing the '
+    #          'waveform data (should contain subdirectories with years).')
     options.add_argument(
         '--sds-root-i95', dest='sds_root_i95', required=True, type=str,
         help='Root directory of the SDS directory structure used to store I95 '
              'data.')
-    options.add_argument(
-        '--fdsn-base-url', dest='fdsn_base_url', required=True, type=str,
-        help='FDSN base url used in obspy FDSN Client. This server will be '
-             'used to fetch station metadata used in deconvolution.')
+    # options.add_argument(
+    #     '--fdsn-base-url', dest='fdsn_base_url', required=True, type=str,
+    #     help='FDSN base url used in obspy FDSN Client. This server will be '
+    #          'used to fetch station metadata used in deconvolution.')
     options.add_argument(
         '--stream', dest='streams', default=[], action='append', required=True,
         help='Stream to consider (i.e. first two characters of SEED channel '
@@ -198,92 +207,64 @@ def main(argv=None):
         help='Suffix for filename of log file (to log multiple simultaneous '
              'program runs to separate files).')
 
-    options = parser.add_argument_group(
-        '(Pre-)Processing Options', 'Settings regarding the details of '
-        '(pre-)processing. An exception will be raised when trying to add '
-        'data to an existing I95 SDS archive and a mismatch of processing '
-        'settings is detected.')
-    options.add_argument(
-        '--window-length', dest='window_length_minutes', type=float,
-        default=10,
-        help='Specifies length of data window the I95 value is based on in '
-             'minutes (this is the actual length, buffers will be added on '
-             'top of this window and cut off after pre-processing).')
-    options.add_argument(
-        '--buffer-length', dest='buffer_length', type=float,
-        default=120,
-        help='Specifies length of waveform buffer both before and after '
-             'actual window used during preprocessing in seconds.')
-    options.add_argument(
-        '--water-level', dest='water_level', required=True,
-        help='Specifies "water_level" option in obspy '
-             '"Stream.remove_response()" during preprocessing. Use a float '
-             'value or "None" for no water level used in deconvolution.')
-    options.add_argument(
-        '--pre-filt', dest='pre_filt', required=True,
-        help='Specifies "pre_filt" option in obspy "Stream.remove_response()" '
-             'during preprocessing. Use four comma-separated floats (no '
-             'spaces, e.g. "0.05,0.1,50,60") or "None" for no pre filter used '
-             'in deconvolution.')
-    options.add_argument(
-        '--filter-type', dest='filter_type', required=True, type=str,
-        help='Specifies which filter to use after deconvolution and before '
-             'calculating I95. Use either "None", "bandpass", "lowpass" or '
-             '"highpass". See obspy Stream.filter().')
-    options.add_argument(
-        '--filter-freq', dest='filter_freq', default=None, type=float,
-        help='Specifies "freq" option for used filter. Only used when '
-             '"lowpass" or "highpass" is selected.')
-    options.add_argument(
-        '--filter-freqmin', dest='filter_freqmin', default=None, type=float,
-        help='Specifies "freqmin" option for used filter. Only used when '
-             '"bandpass" is selected.')
-    options.add_argument(
-        '--filter-freqmax', dest='filter_freqmax', default=None, type=float,
-        help='Specifies "freqmax" option for used filter. Only used when '
-             '"bandpass" is selected.')
-    options.add_argument(
-        '--filter-corners', dest='filter_corners', default=None, type=int,
-        help='Specifies "corners" option for used filter.')
-    options.add_argument(
-        '--filter-zerophase', dest='filter_zerophase', default=False,
-        action='store_true',
-        help='Whether to use a two-pass zero-phase filter (default is no '
-             'zero-phase). Filter is applied twice if this option is '
-             'selected.')
+    # All of this is now handled via the parameter.json file
+    # options = parser.add_argument_group(
+    #     '(Pre-)Processing Options', 'Settings regarding the details of '
+    #     '(pre-)processing. An exception will be raised when trying to add '
+    #     'data to an existing I95 SDS archive and a mismatch of processing '
+    #     'settings is detected.')
+    # options.add_argument(
+    #     '--window-length', dest='window_length_minutes', type=float,
+    #     default=10,
+    #     help='Specifies length of data window the I95 value is based on in '
+    #          'minutes (this is the actual length, buffers will be added on '
+    #          'top of this window and cut off after pre-processing).')
+    # options.add_argument(
+    #     '--buffer-length', dest='buffer_length', type=float,
+    #     default=120,
+    #     help='Specifies length of waveform buffer both before and after '
+    #          'actual window used during preprocessing in seconds.')
+    # options.add_argument(
+    #     '--water-level', dest='water_level', required=True,
+    #     help='Specifies "water_level" option in obspy '
+    #          '"Stream.remove_response()" during preprocessing. Use a float '
+    #          'value or "None" for no water level used in deconvolution.')
+    # options.add_argument(
+    #     '--pre-filt', dest='pre_filt', required=True,
+    #     help='Specifies "pre_filt" option in obspy "Stream.remove_response()" '
+    #          'during preprocessing. Use four comma-separated floats (no '
+    #          'spaces, e.g. "0.05,0.1,50,60") or "None" for no pre filter used '
+    #          'in deconvolution.')
+    # options.add_argument(
+    #     '--filter-type', dest='filter_type', required=True, type=str,
+    #     help='Specifies which filter to use after deconvolution and before '
+    #          'calculating I95. Use either "None", "bandpass", "lowpass" or '
+    #          '"highpass". See obspy Stream.filter().')
+    # options.add_argument(
+    #     '--filter-freq', dest='filter_freq', default=None, type=float,
+    #     help='Specifies "freq" option for used filter. Only used when '
+    #          '"lowpass" or "highpass" is selected.')
+    # options.add_argument(
+    #     '--filter-freqmin', dest='filter_freqmin', default=None, type=float,
+    #     help='Specifies "freqmin" option for used filter. Only used when '
+    #          '"bandpass" is selected.')
+    # options.add_argument(
+    #     '--filter-freqmax', dest='filter_freqmax', default=None, type=float,
+    #     help='Specifies "freqmax" option for used filter. Only used when '
+    #          '"bandpass" is selected.')
+    # options.add_argument(
+    #     '--filter-corners', dest='filter_corners', default=None, type=int,
+    #     help='Specifies "corners" option for used filter.')
+    # options.add_argument(
+    #     '--filter-zerophase', dest='filter_zerophase', default=False,
+    #     action='store_true',
+    #     help='Whether to use a two-pass zero-phase filter (default is no '
+    #          'zero-phase). Filter is applied twice if this option is '
+    #          'selected.')
 
     args = parser.parse_args(argv)
     verbose = args.verbose
     debug = args.debug
-    window_length = args.window_length_minutes * 60
-    buffer_length = args.buffer_length
-    if args.water_level.upper() == 'NONE':
-        water_level = None
-    else:
-        water_level = float(args.water_level)
-    if args.pre_filt.upper() == 'NONE':
-        pre_filt = None
-    else:
-        pre_filt = list(float(value) for value in args.pre_filt.split(','))
-    if args.filter_type.upper() == 'NONE':
-        use_filter = False
-        filter_kwargs = {'type': None}
-    else:
-        use_filter = True
-        filter_kwargs = {'type': args.filter_type}
-    for key in ('filter_freq', 'filter_freqmin', 'filter_freqmax',
-                'filter_corners'):
-        value = getattr(args, key, None)
-        if value is not None:
-            key = key.split('_', 1)[1]
-            filter_kwargs[key] = value
-    filter_kwargs['zerophase'] = args.filter_zerophase
-
-    # prepare dictionary with parameters to store/check in I95 SDS root
-    params = dict(
-        window_length_minutes=args.window_length_minutes,
-        buffer_length=buffer_length, water_level=water_level,
-        pre_filt=pre_filt, filter_kwargs=filter_kwargs)
 
     t = UTCDateTime(args.time)
     # work on the full day of the given timestamp
@@ -295,19 +276,25 @@ def main(argv=None):
         msg = 'Time to process is in the future ({!s})'.format(t)
         raise Exception(msg)
 
-    # time-of-day in nanoseconds to represent times corresponding to I95 values
-    times = np.arange(t._ns, t_end._ns,
-            int(window_length * 1e9), dtype=np.int64)
-    times_of_day = times - t._ns
+    # check if everything is in place regarding root directory
+    if not os.path.isdir(args.sds_root_i95):
+        msg = ('I95 SDS root directory "{}" does not exist or is no '
+               'directory.')
+        raise Exception(msg.format(args.sds_root_i95))
+    # check if parameters.json is in place
+    i95_param_file = os.path.join(args.sds_root_i95, I95_PARAM_FILENAME)
+    if not os.path.exists(i95_param_file):
+        msg = ('I95 SDS root directory "{}" does not contain mandatory '
+               '"parameters.json" file. Create file with e.g. following '
+               'content:\n\n{}\n')
+        raise Exception(msg.format(args.sds_root_i95, EXAMPLE_PARAMETERS_JSON))
+    params, times_of_day = _get_metadata_from_i95_root(args.sds_root_i95)
+    times = times_of_day + t._ns
 
-    # now check if processing is compatible with what is stored in I95 SDS
-    if os.path.exists(args.sds_root_i95):
-        _sanity_check_i95_root(args.sds_root_i95, params, times_of_day)
-        msg = 'Sanity checked existing I95 SDS root at {}'.format(
-            args.sds_root_i95)
+    if params['filter_kwargs']['type']:
+        use_filter = True
     else:
-        _setup_new_i95_root(args.sds_root_i95, params, times_of_day)
-        msg = 'Created new I95 SDS root at ' + args.sds_root_i95
+        use_filter = False
 
     # set up logger
     if args.logfile_suffix:
@@ -326,17 +313,17 @@ def main(argv=None):
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-    logger.info(msg)
-    if verbose:
-        print(msg)
+    # logger.info(msg)
+    # if verbose:
+    #     print(msg)
 
     msg = 'Processing ' + year_day_string
     logger.info(msg)
     if verbose:
         print(msg)
 
-    sds_client_mseed = SDSClient(args.sds_root_waveforms)
-    fdsn_client = FDSNClient(args.fdsn_base_url)
+    sds_client_mseed = SDSClient(params['sds_root_waveforms'])
+    fdsn_client = FDSNClient(params['fdsn_base_url'])
     sds_client_npy = SDSClient(args.sds_root_i95)
     sds_client_npy.FMTSTR += ".npy"
     msg = 'Connected SDS/FDSN clients.'
@@ -373,7 +360,8 @@ def main(argv=None):
     if verbose:
         print(msg)
 
-    def _process(net, sta, loc, cha, t, verbose=verbose, debug=debug):
+    def _process(net, sta, loc, cha, t, times, params, verbose=verbose,
+                 debug=debug):
         global logger
         npy_file = sds_client_npy._get_filename(
             net, sta, loc, cha, t)
@@ -406,6 +394,8 @@ def main(argv=None):
 
         data = np.zeros(len(times), dtype=DTYPE)
 
+        window_length = params['window_length_minutes'] * 60
+
         msg = '{} windows to process'.format(len(times))
         logger.info(msg)
         if verbose:
@@ -419,8 +409,8 @@ def main(argv=None):
             #          buffer           actual window          buffer
             t1 = UTCDateTime(ns=t_) - (window_length / 2.0)
             t2 = UTCDateTime(ns=t_) + (window_length / 2.0)
-            t0 = t1 - buffer_length
-            t3 = t2 + buffer_length
+            t0 = t1 - params['buffer_length']
+            t3 = t2 + params['buffer_length']
             st = sds_client_mseed.get_waveforms(net, sta, loc, cha, t0, t3)
             # cleanup merge..
             st.merge(-1)
@@ -431,7 +421,8 @@ def main(argv=None):
             # can not be processed..
             st.traces = [
                 tr for tr in st if
-                (tr.stats.endtime - tr.stats.starttime) > 2 * buffer_length]
+                (tr.stats.endtime - tr.stats.starttime) >
+                2 * params['buffer_length']]
             if not st:
                 if verbose:
                     print('x', end='')
@@ -444,15 +435,16 @@ def main(argv=None):
                     _plot_debug_image(t_, j, tr, '0_raw', args.sds_root_i95)
                 tr.detrend("demean")
                 tr.taper(type="cosine", max_percentage=None,
-                         max_length=buffer_length * 0.8, side="both")
+                         max_length=params['buffer_length'] * 0.8, side="both")
                 tr.remove_response(
-                    inventory=inv, output="VEL", water_level=water_level,
-                    pre_filt=pre_filt, zero_mean=False, taper=False)
+                    inventory=inv, output="VEL",
+                    water_level=params['water_level'],
+                    pre_filt=params['pre_filt'], zero_mean=False, taper=False)
                 if debug:
                     _plot_debug_image(t_, j, tr, '1_deconvolved',
                                       args.sds_root_i95)
                 if use_filter:
-                    tr.filter(**filter_kwargs)
+                    tr.filter(**params['filter_kwargs'])
                 if debug:
                     _plot_debug_image(t_, j, tr, '2_filtered',
                                       args.sds_root_i95)
@@ -462,8 +454,9 @@ def main(argv=None):
                 # cut away part of the actual data window to avoid having
                 # tapered data in the I95 calculation (which would lead to
                 # artificially lowered I95 for gappy data)
-                trim_start = max(t1, tr.stats.starttime + buffer_length)
-                trim_end = min(t2, tr.stats.endtime - buffer_length)
+                trim_start = max(
+                    t1, tr.stats.starttime + params['buffer_length'])
+                trim_end = min(t2, tr.stats.endtime - params['buffer_length'])
                 tr.trim(starttime=trim_start, endtime=trim_end)
                 if debug:
                     _plot_debug_image(t_, j, tr, '3_trimmed',
@@ -490,7 +483,7 @@ def main(argv=None):
         logger.info(msg)
         if verbose:
             print(msg)
-        _process(net, sta, loc, cha, t, verbose=verbose)
+        _process(net, sta, loc, cha, t, times, params, verbose=verbose)
 
 
 if __name__ == '__main__':
