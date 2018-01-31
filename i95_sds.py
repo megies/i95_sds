@@ -2,7 +2,8 @@
 import os
 
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap, BoundaryNorm
+import matplotlib as mpl
+from matplotlib.colors import ListedColormap, BoundaryNorm, Normalize
 from matplotlib.dates import date2num
 from matplotlib.patches import Rectangle
 import numpy as np
@@ -205,13 +206,52 @@ class I95SDSClient(object):
         # print(data)
         return data
 
-    def plot(self, network, station, location, channel, starttime, endtime,
-             cmap=None, show=True):
-        data, no_data, used_channels = self._get_data(
-            network, station, location, channel, starttime, endtime)
+    def plot_all_data(self, starttime, endtime, cmap=None, show=True,
+                      global_norm=False):
+        nslc = [('BW', 'MANZ', '', 'HHZ'),
+                ('BW', 'MROB', '', 'HHZ'),
+                ('BW', 'VIEL', '', 'HHZ')]
+
+        nslc = sorted(nslc)
+
+        all_data = []
+        for net, sta, loc, cha in nslc:
+            data, no_data, used_channels = self._get_data(
+                net, sta, loc, cha, starttime, endtime)
+            all_data.append((data, no_data, used_channels))
 
         # plotting of data parts
-        fig, ax = plt.subplots()
+        xmin_global = np.inf
+        xmax_global = -np.inf
+        vmin_global = np.inf
+        vmax_global = -np.inf
+        fig, axes = plt.subplots(nrows=len(nslc), sharex=True)
+        for ax, (net, sta, loc, cha), (data, no_data, used_channels) in zip(
+                axes, nslc, all_data):
+            vmin, vmax, xmin, xmax, _ = self._plot(
+                ax, data, no_data, used_channels, net, sta, loc, cmap=cmap,
+                colorbar=not global_norm)
+            vmin_global = min(vmin_global, vmin)
+            vmax_global = max(vmax_global, vmax)
+            xmin_global = min(xmin_global, xmin)
+            xmax_global = max(xmax_global, xmax)
+        fig.autofmt_xdate()
+        fig.tight_layout()
+        fig.subplots_adjust(hspace=0.02)
+        if global_norm:
+            norm = Normalize(vmin_global, vmax_global)
+            for ax in axes:
+                for im in ax.images:
+                    im.set_norm(norm)
+            cb = plt.colorbar(mappable=im, ax=axes)
+            cb.set_label('I95 [nm/s]')
+        fig.canvas.draw_idle()
+        if show:
+            plt.show()
+        return fig, ax
+
+    def _plot(self, ax, data, no_data, used_channels, network, station,
+              location, cmap=None, colorbar=True):
         vmin = np.inf
         vmax = -np.inf
         for d in data:
@@ -229,14 +269,16 @@ class I95SDSClient(object):
         cmap.set_bad(self.no_data_color)
         for d in data:
             self._plot_data(ax, d, vmin, vmax, cmap)
-        cb = plt.colorbar(mappable=ax.images[-1])
-        cb.set_label('I95 [nm/s]')
+        if colorbar:
+            cb = plt.colorbar(mappable=ax.images[-1], ax=ax)
+            cb.set_label('I95 [nm/s]')
+        else:
+            cb = None
         # plotting of "no data" parts
         for start, end in no_data:
             self._plot_no_data(ax, start, end)
         # fig/ax tweaks
         ax.xaxis_date()
-        fig.autofmt_xdate()
         xmin = min(im.get_extent()[0] for im in ax.images)
         xmax = max(im.get_extent()[1] for im in ax.images)
         ax.set_xlim(xmin, xmax)
@@ -244,6 +286,18 @@ class I95SDSClient(object):
         channel = _merge_stream_labels(used_channels)
         label = '.'.join([network, station, location, channel])
         ax.set_ylabel(label, fontdict={'family': 'monospace'})
+        return vmin, vmax, xmin, xmax, cb
+
+    def plot(self, network, station, location, channel, starttime, endtime,
+             cmap=None, show=True):
+        data, no_data, used_channels = self._get_data(
+            network, station, location, channel, starttime, endtime)
+
+        # plotting of data parts
+        fig, ax = plt.subplots()
+        self._plot(ax, data, no_data, used_channels, network, station,
+                   location, cmap=cmap)
+        fig.autofmt_xdate()
         fig.tight_layout()
         if show:
             plt.show()
