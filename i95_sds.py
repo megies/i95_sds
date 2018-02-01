@@ -2,15 +2,14 @@
 import os
 
 import matplotlib.pyplot as plt
-import matplotlib as mpl
-from matplotlib.colors import ListedColormap, BoundaryNorm, Normalize
+from matplotlib.colors import ListedColormap, BoundaryNorm
 from matplotlib.dates import date2num
-from matplotlib.patches import Rectangle
 import numpy as np
 
 from obspy import UTCDateTime
 from obspy.clients.filesystem.sds import Client as SDSClient
 from obspy.imaging.cm import viridis
+from obspy.imaging.util import ObsPyAutoDateFormatter
 
 
 def _filename_to_nanoseconds_start_of_day(filename):
@@ -36,7 +35,13 @@ def _nanoseconds_to_mpl_data(times):
     return date2num(times)
 
 
+def _label_for_used_channels(net, sta, loc, used_channels):
+    return '.'.join((net, sta, loc,
+                     _merge_stream_labels(used_channels)))
+
+
 def _merge_stream_labels(channels):
+    channels = list(channels)
     if len(channels) == 1:
         return channels[0]
     first = channels[0]
@@ -52,7 +57,8 @@ def _merge_stream_labels(channels):
 
 
 class I95SDSClient(object):
-    def __init__(self, sds_root, merge_streams=('HH', 'EH', 'EL')):
+    def __init__(self, sds_root, merge_streams=('HH', 'EH', 'EL'),
+                 vmax_clip_percentile=98):
         self.sds_root = sds_root
         self.merge_streams = merge_streams
         self.client = SDSClient(self.sds_root)
@@ -68,36 +74,76 @@ class I95SDSClient(object):
         self.no_data_color = 'lightgray'
         # clip at this percentile of all I95 data,
         # to avoid single I95 spikes controlling the whole colormap
-        self.vmax_clip_percentile = 98
+        self.vmax_clip_percentile = vmax_clip_percentile
 
-    def _get_data(self, network, station, location, channel, starttime,
-                  endtime):
-        if channel[:2] in self.merge_streams:
-            channels = [stream + channel[2:] for stream in self.merge_streams]
+    def _get_filenames(self, network, station, location, channel, starttime,
+                       endtime, merge_streams=False):
+        if merge_streams:
+            if channel[:2] in self.merge_streams:
+                channels = [stream + channel[2:]
+                            for stream in self.merge_streams]
+            else:
+                channels = [channel]
         else:
             channels = [channel]
 
+        num_days = (int(endtime.matplotlib_date) -
+                    int(starttime.matplotlib_date) + 1)
+
         filenames = []
         t = starttime
-        while t < endtime:
+        while t <= endtime and \
+                int(t.matplotlib_date) <= int(endtime.matplotlib_date):
             filenames.append(
                 [(cha, self.client._get_filename(
                     network, station, location, cha, t)) for cha in channels])
             t += 24 * 3600
 
-        # this will contain tuples of (year, day of year) that were processed
-        # but have no data availability
-        no_data_year_day = []
-        no_data = []
-        # this will contain all data as a list of numpy arrays
-        data = []
-        # this is used for temporarily adding up and merging contiguous data
-        # blocks
-        data_ = []
-        # print(filenames)
-        used_channels = set()
+        assert num_days == len(filenames)
+        return filenames
 
-        for filenames_ in filenames:
+    def _merge_streams_in_nslc(self, nslc):
+        """
+        Removes NSLC combinations that would lead to duplicated data when
+        getting/plotting data while merging streams (e.g. combining EH and HH
+        data).
+        """
+        if not self.merge_streams:
+            return nslc
+        nslc_new = []
+        for n, s, l, c in nslc:
+            for stream in self.merge_streams:
+                if (n, s, l, stream + c[2:]) in nslc_new:
+                    break
+            else:
+                nslc_new.append((n, s, l, c))
+        return nslc_new
+
+    def get_data(self, network, station, location, channel, starttime,
+                 endtime, out=None, merge_streams=True):
+        used_channels = set([channel])
+
+        filenames = self._get_filenames(network, station, location, channel,
+                                        starttime, endtime,
+                                        merge_streams=merge_streams)
+        num_days = len(filenames)
+
+        if out is None:
+            # prepare array that will be filled with all individual data pieces
+            # data = np.zeros(len(filenames) * self.len, dtype=self.dtype)
+            data = np.ma.empty(num_days * self.len, dtype=self.dtype)
+            data.mask = False
+        else:
+            data = out
+            # XXX do some assertions on dtype and shape and mask!!
+        mem_address = data.__array_interface__['data'][0]
+        data = data.reshape((num_days, self.len))
+        # check that no copying was done in mem by reshaping
+        assert mem_address == data.__array_interface__['data'][0]
+        # print(filenames)
+
+        for i, filenames_ in enumerate(filenames):
+            masked = False
             individual_channel_data = []
             for cha, filename in filenames_:
                 individual_channel_data.append(
@@ -125,68 +171,64 @@ class I95SDSClient(object):
                         ds.append(d)
                 best_coverage = np.argmax(np.vstack(ds)['coverage'], axis=0)
                 d = np.choose(best_coverage, ds)
-            # no channel at all was processed yet.. ignore
+            # no channel at all was processed yet.. create dummy data
             elif all([d is None for cha, d in individual_channel_data]):
-                # ..because data was not processed, just skip,
-                # leaving an empty spot in the plot
-                continue
+                # ..because data was not processed.
+                # make clear that data was not processed for this time by
+                # setting the mask
+                d = np.empty(self.len, dtype=self.dtype)
+                # XXX should we make coverage an int8 instead, so we can put -1
+                # in there for "no data processed yet"?
+                d['coverage'] = 0
+                d['i95'] = np.nan
+                d['time'] = (self.times_of_day_nanoseconds +
+                             _filename_to_nanoseconds_start_of_day(filename))
+                masked = True
             # some channels were processed but None has data: add as gap
             elif all([d is False or d is None
                       for cha, d in individual_channel_data]):
                 # ..because data was processed, but there was no waveforms,
                 # so this is definitely a gap in the waveforms
-                no_data_year_day.append(
-                    _filename_to_year_and_day_of_year(filename))
-                continue
+                d = np.empty(self.len, dtype=self.dtype)
+                d['coverage'] = 0
+                d['i95'] = np.nan
+                d['time'] = (self.times_of_day_nanoseconds +
+                             _filename_to_nanoseconds_start_of_day(filename))
             else:
                 raise NotImplementedError
 
-            # we have no data
-            if d is None:
-                # ..because data was not processed, just skip,
-                # leaving an empty spot in the plot
-                continue
-            elif d is False:
-                # ..because data was processed, but there was no waveforms,
-                # so this is definitely a gap in the waveforms
-                no_data_year_day.append(
-                    _filename_to_year_and_day_of_year(filename))
-                continue
             # we have data
-            if not data_:
-                data_.append(d)
-                continue
-            if d['time'][0] == data_[-1]['time'][-1] + self.delta_ns:
-                data_.append(d)
-                continue
-            data.append(np.concatenate(data_))
-            data_ = [d]
-        data.append(np.concatenate(data_))
-        # setup no data parts
-        start = None
-        end = None
-        seconds_per_day = 24 * 3600
-        for year, day in sorted(no_data_year_day):
-            t = UTCDateTime(year=year, julday=day)
-            if start is None:
-                start = t
-                end = t + seconds_per_day
-                continue
-            # extend by one day if contiguous
-            if t == end:
-                end += seconds_per_day
-                continue
-            # otherwise start a new timespan
-            no_data.append((start, end))
-            start = t
-            end = t + seconds_per_day
-        # add last timespan, if any
-        if start is not None:
-            no_data.append((start, end))
-        # print("nodata: ", no_data)
-        # print("nodata tuples: ", no_data_year_day)
-        # import pdb; pdb.set_trace()
-        return data, no_data, sorted(used_channels)
+            data[i][:] = d
+            if masked:
+                data.mask[i] = True
+
+        data = data.reshape(-1)
+        data['time'].mask = False
+        # check that no copying was done in mem by reshaping
+        assert mem_address == data.__array_interface__['data'][0]
+
+        label = _label_for_used_channels(network, station, location,
+                                         used_channels)
+        return data, sorted(used_channels), label
+
+    @staticmethod
+    def _fast_availability_for_filename(filename):
+        """
+        Quick estimate of availability.
+
+        Returns either -1 (file not present, i.e. data not processed yet), 0
+        (stub file present, i.e. data was processed but no waveforms available)
+        or 100 (file present, so at least some data is available for that day)
+        """
+        try:
+            filesize = os.path.getsize(filename)
+        except:
+            # should not happen, as only existing filenames are
+            # returned by obspy SDS Client looks like
+            return -1
+        if filesize == 1:
+            return 0
+        return 100
 
     def _load_npy_file(self, filename):
         if not os.path.exists(filename):
@@ -206,170 +248,206 @@ class I95SDSClient(object):
         # print(data)
         return data
 
-    def plot_all_data(self, starttime, endtime, cmap=None, show=True,
-                      global_norm=False):
-        nslc = [('BW', 'MANZ', '', 'HHZ'),
-                ('BW', 'MROB', '', 'HHZ'),
-                ('BW', 'VIEL', '', 'HHZ')]
+    def get_data_multiple_nslc(self, nslc, starttime, endtime):
+        num_days = (int(endtime.matplotlib_date) -
+                    int(starttime.matplotlib_date) + 1)
+        data = np.ma.empty((len(nslc), num_days * self.len), dtype=self.dtype)
+        mem_address = data.__array_interface__['data'][0]
+        data.mask = False
+        used_channels = []
+        labels = []
+        for (n, s, l, c), data_ in zip(nslc, data):
+            _, used_channels_, label = self.get_data(
+                n, s, l, c, starttime, endtime, out=data_)
+            labels.append(label)
+            used_channels.append(used_channels_)
+        data['time'].mask = False
+        # check that no copying was done in mem by reshaping or internally in
+        # get_data()
+        assert mem_address == data.__array_interface__['data'][0]
+        return data, used_channels, labels
 
-        nslc = sorted(nslc)
+    def plot_all_data(self, starttime, endtime, cmap=None, global_norm=False,
+                      colorbar=True, merge_streams=False, show=True):
+        nslc = self.client.get_all_nslc()
+        if merge_streams:
+            nslc = self._merge_streams_in_nslc(nslc)
 
-        all_data = []
-        for net, sta, loc, cha in nslc:
-            data, no_data, used_channels = self._get_data(
-                net, sta, loc, cha, starttime, endtime)
-            all_data.append((data, no_data, used_channels))
+        data, used_channels, labels = self.get_data_multiple_nslc(
+            nslc, starttime, endtime)
+
+        # remove ids that have no data in given time range
+        valid = [i for i, d in enumerate(data)
+                 if not np.all(d['i95'].mask | np.isnan(d['i95']).data)]
+        data = data[valid]
+        used_channels = [item for i, item in enumerate(used_channels)
+                         if i in valid]
+        labels = [item for i, item in enumerate(labels) if i in valid]
 
         # plotting of data parts
-        xmin_global = np.inf
-        xmax_global = -np.inf
-        vmin_global = np.inf
-        vmax_global = -np.inf
-        fig, axes = plt.subplots(nrows=len(nslc), sharex=True)
-        for ax, (net, sta, loc, cha), (data, no_data, used_channels) in zip(
-                axes, nslc, all_data):
-            vmin, vmax, xmin, xmax, _ = self._plot(
-                ax, data, no_data, used_channels, net, sta, loc, cmap=cmap,
-                colorbar=not global_norm)
-            vmin_global = min(vmin_global, vmin)
-            vmax_global = max(vmax_global, vmax)
-            xmin_global = min(xmin_global, xmin)
-            xmax_global = max(xmax_global, xmax)
-        fig.autofmt_xdate()
-        fig.tight_layout()
-        fig.subplots_adjust(hspace=0.02)
+        vmin_global = np.nanmin(data['i95'])
+        # vmax_global = np.nanmax(data['i95'])
+        vmax_global = np.nanpercentile(data['i95'],
+                                       q=self.vmax_clip_percentile)
+        vmin = None
+        vmax = None
         if global_norm:
-            norm = Normalize(vmin_global, vmax_global)
-            for ax in axes:
-                for im in ax.images:
-                    im.set_norm(norm)
-            cb = plt.colorbar(mappable=im, ax=axes)
-            cb.set_label('I95 [nm/s]')
-        fig.canvas.draw_idle()
+            vmin = vmin_global
+            vmax = vmax_global
+        fig, ax = plt.subplots()
+        channels = [_merge_stream_labels(chas) for chas in used_channels]
+        labels = ['.'.join((n, s, l, c))
+                  for (n, s, l, _), c in zip(nslc, channels)]
+        self._plot(
+            ax, data, labels, cmap=cmap,
+            colorbar=colorbar, vmin=vmin, vmax=vmax, global_norm=global_norm)
         if show:
             plt.show()
         return fig, ax
 
-    def _plot(self, ax, data, no_data, used_channels, network, station,
-              location, cmap=None, colorbar=True):
-        vmin = np.inf
-        vmax = -np.inf
-        for d in data:
-            vmax_ = np.nanmax(d['i95'])
-            if not np.isnan(vmax_):
-                vmax = max(vmax, vmax_)
-            vmin_ = np.nanmin(d['i95'])
-            if not np.isnan(vmin_):
-                vmin = min(vmin, vmin_)
-        # clip vmax at given percentile
-        vmax = np.nanpercentile(np.concatenate([d['i95'] for d in data]),
-                                q=self.vmax_clip_percentile)
+    def _plot(self, ax, data, label, cmap=None, colorbar=True,
+              vmin=None, vmax=None, global_norm=True):
+        if vmin is None:
+            vmin = np.nanmin(data['i95'])
+        if vmax is None:
+            # vmax = np.nanmax(data['i95'])
+            # clip vmax at given percentile
+            # XXX remove this??
+            vmax = np.nanpercentile(data['i95'], q=self.vmax_clip_percentile)
+            # print vmax
         # print(vmin, vmax)
         cmap = cmap or viridis
         cmap.set_bad(self.no_data_color)
-        for d in data:
-            self._plot_data(ax, d, vmin, vmax, cmap)
-        if colorbar:
-            cb = plt.colorbar(mappable=ax.images[-1], ax=ax)
-            cb.set_label('I95 [nm/s]')
+
+        half_delta = self.delta_days / 2.0
+        start = date2num(
+            UTCDateTime(ns=data['time'].flat[0]).datetime) - half_delta
+        end = date2num(
+            UTCDateTime(ns=data['time'].flat[-1]).datetime) + half_delta
+        # print(start)
+        # print(end)
+        # print(half_delta)
+        cb = None
+        if data.ndim == 1 or global_norm:
+            im = ax.imshow(np.atleast_2d(data['i95']),
+                           extent=[start, end, 0, data.shape[0]], vmin=vmin,
+                           vmax=vmax, cmap=cmap, interpolation='nearest',
+                           aspect='auto')
+            if colorbar:
+                cb = plt.colorbar(mappable=im, ax=ax)
+                cb.set_label('I95 [nm/s]')
         else:
-            cb = None
-        # plotting of "no data" parts
-        for start, end in no_data:
-            self._plot_no_data(ax, start, end)
+            for i, data_ in enumerate(data[::-1]):
+                vmin = np.nanmin(data_['i95'])
+                vmax = np.nanpercentile(data_['i95'],
+                                        q=self.vmax_clip_percentile)
+                im = ax.imshow(np.atleast_2d(data_['i95']),
+                               extent=[start, end, 0 + i, 1 + i], vmin=vmin,
+                               vmax=vmax, cmap=cmap, interpolation='nearest',
+                               aspect='auto')
+            if colorbar:
+                # make room for colorbars, shrink axes
+                ax_rect = list(ax.get_position().bounds)
+                ax_rect[0] += 0.10
+                ax_rect[3] = 1.0 - ax_rect[1] - 0.02
+                ax_rect[2] -= 0.2
+                ax.set_position(ax_rect)
+                ax_left, ax_bottom, ax_width, ax_height = ax_rect
+                cb_bottom = ax_bottom
+                cb_top = cb_bottom + ax_height
+                cb_individual_height = (cb_top - cb_bottom) / data.shape[0]
+                for i, im in enumerate(ax.images):
+                    cax_left = ax_left + ax_width + 0.04
+                    cax_bottom = ax_bottom + i * cb_individual_height + 0.01
+                    cax_width = 0.02
+                    cax_height = cb_individual_height - 0.02
+                    cax_rect = [cax_left, cax_bottom, cax_width, cax_height]
+                    cax = ax.figure.add_axes(cax_rect)
+                    cb = plt.colorbar(mappable=im, cax=cax)
+                    cb.set_label('I95 [nm/s]')
+
         # fig/ax tweaks
         ax.xaxis_date()
-        xmin = min(im.get_extent()[0] for im in ax.images)
-        xmax = max(im.get_extent()[1] for im in ax.images)
-        ax.set_xlim(xmin, xmax)
+        ax.xaxis.set_major_formatter(
+            ObsPyAutoDateFormatter(ax.xaxis.get_major_locator()))
         ax.set_yticks([])
-        channel = _merge_stream_labels(used_channels)
-        label = '.'.join([network, station, location, channel])
-        ax.set_ylabel(label, fontdict={'family': 'monospace'})
-        return vmin, vmax, xmin, xmax, cb
+        fontdict = {'family': 'monospace'}
+        if data.ndim > 1:
+            ax.set_yticks(np.arange(data.shape[0], dtype=np.float32) + 0.5)
+            ax.set_yticklabels(label[::-1], fontdict=fontdict)
+            ax.set_ylim(0, data.shape[0])
+        else:
+            ax.set_ylabel(label, fontdict=fontdict)
+            ax.set_ylim(0, 1)
+        ax.figure.autofmt_xdate()
+        if data.ndim == 1 or global_norm:
+            ax.figure.tight_layout()
+        ax.figure.canvas.draw_idle()
+        return cb
 
     def plot(self, network, station, location, channel, starttime, endtime,
              cmap=None, show=True):
-        data, no_data, used_channels = self._get_data(
+        data, used_channels, label = self.get_data(
             network, station, location, channel, starttime, endtime)
 
-        # plotting of data parts
         fig, ax = plt.subplots()
-        self._plot(ax, data, no_data, used_channels, network, station,
-                   location, cmap=cmap)
-        fig.autofmt_xdate()
-        fig.tight_layout()
+        self._plot(ax, data, label, cmap=cmap)
         if show:
             plt.show()
         return fig, ax
 
-    def _plot_data(self, ax, data, vmin, vmax, cmap):
-        half_delta = self.delta_days / 2.0
-        start = date2num(UTCDateTime(ns=data['time'][0]).datetime) - half_delta
-        end = date2num(UTCDateTime(ns=data['time'][-1]).datetime) + half_delta
-        # print(start)
-        # print(end)
-        # print(half_delta)
-        ax.imshow(np.atleast_2d(data['i95']), extent=[start, end, 0, 1],
-                  vmin=vmin, vmax=vmax, cmap=cmap, interpolation='nearest',
-                  aspect='auto')
-
-    def _plot_no_data(self, ax, starttime, endtime):
-        start = date2num(starttime.datetime)
-        delta_days = (endtime - starttime) / (24 * 3600)
-        patch = Rectangle((start, 0.0), width=delta_days, height=1,
-                          color=self.no_data_color)
-        ax.add_patch(patch)
-
-    def _get_availability(self, starttime, endtime, fast=True):
+    def _get_availability(self, starttime, endtime, fast=True,
+                          merge_streams=False):
         if not fast:
             raise NotImplementedError
 
         nslc = self.client.get_all_nslc()
-        data = {}
+        if merge_streams:
+            nslc = self._merge_streams_in_nslc(nslc)
 
-        start_day = int(date2num(starttime.date))
-        end_day = int(date2num(endtime.date))
-        num_days = end_day - start_day
+        start_day = int(starttime.matplotlib_date)
+        end_day = int(endtime.matplotlib_date)
+        num_days = end_day - start_day + 1
 
-        for net, sta, loc, cha in nslc:
-            filenames = self.client._get_filenames(
-                net, sta, loc, cha, starttime, endtime)
-            data_ = np.empty(num_days, dtype=np.int8)
-            data_.fill(-1)
-            for filename in filenames:
-                index = _filename_to_mpl_day(filename) - start_day
-                try:
-                    filesize = os.path.getsize(filename)
-                except:
-                    # should not happen, as only existing filenames are
-                    # returned by obspy SDS Client looks like
-                    data_[index] = -1
-                else:
-                    if filesize > 1:
-                        data_[index] = 100
-                    else:
-                        data_[index] = 0
-            data[(net, sta, loc, cha)] = data_
-        return start_day, end_day, data
+        data = np.empty((len(nslc), num_days), dtype=np.int8)
+        data.fill(-1)
 
-    def plot_availability(self, starttime, endtime, fast=True, show=True):
+        labels = []
+        for i, (net, sta, loc, cha) in enumerate(nslc):
+            data_ = data[i]
+            used_channels = set([cha])
+            filenames = self._get_filenames(
+                net, sta, loc, cha, starttime, endtime,
+                merge_streams=merge_streams)
+            for filenames_ in filenames:
+                for cha_, filename in filenames_:
+                    index = _filename_to_mpl_day(filename) - start_day
+                    avail_ = self._fast_availability_for_filename(filename)
+                    if avail_ > 0:
+                        used_channels.add(cha_)
+                    avail_ = min(avail_, 100)
+                    # XXX this might not be exact for transition days (days
+                    # when e.g. EH and HH have both data for half the day), in
+                    # which case we would have to add up both availability
+                    # parts. but right now we set only 0% or 100% anyway
+                    data_[index] = max(avail_, data_[index])
+            label = _label_for_used_channels(net, sta, loc, used_channels)
+            labels.append(label)
+        return data, labels
+
+    def plot_availability(self, starttime, endtime, fast=True,
+                          merge_streams=False, show=True, grid=True):
         if not fast:
             raise NotImplementedError
 
-        start_day, end_day, data = self._get_availability(
-            starttime, endtime, fast=fast)
+        data, labels = self._get_availability(
+            starttime, endtime, fast=fast, merge_streams=merge_streams)
 
-        all_labels = []
-        all_data = []
-        for (n, s, l, c), data in sorted(data.items()):
-            all_labels.append('.'.join([n, s, l, c]))
-            all_data.append(data)
+        start_day = int(starttime.matplotlib_date)
+        end_day = int(endtime.matplotlib_date) + 1
 
-        all_data = np.atleast_2d(np.vstack(all_data))
-        extent = [start_day, end_day, -0.5, -0.5 + len(all_data)]
-        # numpy array gets plotted from bottom to top in imshow
-        all_labels = all_labels[::-1]
+        data = np.atleast_2d(data)
+        extent = [start_day, end_day, 0, len(data)]
 
         # make a color map of fixed colors
         #  -1 in data means: not processed
@@ -381,11 +459,21 @@ class I95SDSClient(object):
         norm = BoundaryNorm(bounds, cmap.N)
 
         fig, ax = plt.subplots()
-        ax.imshow(all_data, extent=extent, interpolation='nearest',
+        ax.imshow(data, extent=extent, interpolation='nearest',
                   aspect='auto', cmap=cmap, norm=norm)
-        ax.set_yticks(range(len(all_data)))
-        ax.set_yticklabels(all_labels, fontdict={'family': 'monospace'})
+        ax.set_yticks(np.arange(len(data)) + 0.5)
+        if grid:
+            grid_y = np.arange(len(data) + 1)
+            grid_kwargs = dict(color='k', lw=1.0, alpha=0.5)
+            for y in grid_y[::2]:
+                ax.axhline(y, ls='-', **grid_kwargs)
+            for y in grid_y[1::2]:
+                ax.axhline(y, ls='--', **grid_kwargs)
+        # numpy array gets plotted from bottom to top in imshow
+        ax.set_yticklabels(labels[::-1], fontdict={'family': 'monospace'})
         ax.xaxis_date()
+        ax.xaxis.set_major_formatter(
+            ObsPyAutoDateFormatter(ax.xaxis.get_major_locator()))
         fig.autofmt_xdate()
         fig.tight_layout()
 
@@ -425,30 +513,9 @@ if __name__ == '__main__':
     # data = i95_client._load_npy_file(
     #     '/bay200/I95_1-20Hz_new/2016/BW/VIEL/EHZ.D/BW.VIEL..EHZ.D.2016.020.npy')
 
-    availability = i95_client.get_availability(
+    data, labels = i95_client.get_availability(
         starttime=UTCDateTime(2010, 1, 1), endtime=UTCDateTime(2018, 1, 1),
         fast=True)
 
-    for (n, s, l, c), data in availability.iteritems():
-        print((n, s, l, c), len(data))
-
-    all_labels = []
-    all_data = []
-    for (n, s, l, c), data in sorted(availability.items()):
-        all_labels.append('.'.join([n, s, l, c]))
-        all_data.append(data)
-    print(all_data)
-
-    # fig, ax = plt.subplots()
-    # ax.imshow(np.atleast_2d(np.vstack(all_data)),
-    #           extent=[date2num(UTCDateTime(2010, 1, 1).date),
-    #                   date2num(UTCDateTime(2018, 1, 1).date),
-    #                   -0.5, -0.5 + len(all_data)],
-    #           interpolation='nearest',
-    #           aspect='auto', cmap=cmap, norm=norm)
-    # ax.set_yticks(range(len(all_data)))
-    # ax.set_yticklabels(all_labels[::-1], fontdict={'family': 'monospace'})
-    # ax.xaxis_date()
-    # fig.autofmt_xdate()
-    # fig.tight_layout()
-    # plt.show()
+    print(data)
+    print(labels)
