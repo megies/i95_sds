@@ -58,7 +58,20 @@ def _merge_stream_labels(channels):
 
 class I95SDSClient(object):
     def __init__(self, sds_root, merge_streams=('HH', 'EH', 'EL'),
-                 vmax_clip_percentile=98):
+                 vmax_clip_percentile=98, smoothing_window_length_hours=None,
+                 smoothing_step_hours=None, smoothing_valid_percentage=50,
+                 smoothing_percentile=95, smoothing_mean=True):
+        """
+        :param smoothing_percentile: Defines what percentile of the
+            window used for smoothing is used as resulting value of that window
+            (values from ``0`` to ``100``). If ``smoothing_mean`` is ``True``,
+            then values above this percentile are discarded before calculating
+            the mean.
+        :param smoothing_mean: Whether or not the mean is calculated as the
+            resulting value for each smoothing window. If
+            ``smoothing_percentile`` is less then ``100``, then values above
+            the specified percentile are excluded from the mean calculation.
+        """
         self.sds_root = sds_root
         self.merge_streams = merge_streams
         self.client = SDSClient(self.sds_root)
@@ -75,6 +88,134 @@ class I95SDSClient(object):
         # clip at this percentile of all I95 data,
         # to avoid single I95 spikes controlling the whole colormap
         self.vmax_clip_percentile = vmax_clip_percentile
+        # use uneven number of values, so we have a symmetric stencil and end
+        # up on an even time
+        self._do_smoothing = False
+        self._smooth_wlen = None
+        self._smooth_step = None
+        self._smoothing_percentile = None
+        self._smoothing_valid_count = None
+        if (smoothing_window_length_hours is not None or
+                smoothing_step_hours is not None):
+            if not all((smoothing_window_length_hours is not None,
+                        smoothing_step_hours is not None)):
+                msg = ("if one of 'smoothing_window_length_hours' and "
+                       "'smoothing_step_hours' is set, both must be "
+                       "specified.")
+                raise ValueError(msg)
+            # smoothing parameters stored in units of data array indices
+            smoothing_step_ns = int(smoothing_step_hours * 3600 * 1e9)
+            smoothing_wlen_ns = int(smoothing_window_length_hours * 3600 * 1e9)
+            self._do_smoothing = True
+            self._smooth_wlen = smoothing_wlen_ns // self.delta_ns + 1
+            self._smooth_step = smoothing_step_ns // self.delta_ns
+            self._smoothing_percentile = smoothing_percentile
+            self._smoothing_mean = smoothing_mean
+            self._smoothing_valid_count = int(
+                smoothing_valid_percentage * self._smooth_wlen / 100.0)
+
+    def _smooth(self, data, out=None):
+        if not self._do_smoothing:
+            return data
+
+        if data.ndim == 1:
+            # XXX check usage of out parameter.. looks like _smooth ever is
+            # only called with 1d though, so it seems safe
+            smoothed, _ = self._smooth_1d(data, out=out)
+            return smoothed
+        else:
+            # see above comment, right now disallow using _smooth() for
+            # multiple stations at the same time
+            raise NotImplementedError
+
+        smoothed = None
+        meta = None
+        out = None
+
+        for i, d in enumerate(data):
+            if smoothed is not None:
+                out = smoothed[i]
+            smoothed_, meta = self._smooth_1d(d, meta=meta, out=out)
+            if smoothed is None:
+                smoothed = np.empty((len(data), len(smoothed_)),
+                                    dtype=data.dtype)
+            smoothed[i][:] = smoothed_
+        return smoothed
+
+    def _smooth_1d(self, data, meta=None, out=None):
+        if not self._do_smoothing:
+            return data
+
+        if meta is None:
+            # idx = (np.arange(self._smooth_wlen) +
+            #        np.arange(len(data) + self._smooth_wlen - 1)[:, None] -
+            #        (self._smooth_wlen + 1))
+            # loosely based on https://stackoverflow.com/a/36703105/3419472
+            idx = (
+                np.arange(self._smooth_wlen) +
+                np.arange(
+                    -self._smooth_wlen,
+                    len(data) + self._smooth_step,
+                    self._smooth_step)[:, None])
+            invalid_low = idx < 0
+            invalid_high = idx >= len(data)
+            invalid = invalid_low | invalid_high
+            # somehow can't get the idx array correct right from the start.. so
+            # cut off invalid slices now.
+            # this is only done once for large datasets, so shouldn't be a big
+            # problem
+            valid_rows = np.sum(~invalid, axis=1) > self._smoothing_valid_count
+            idx = idx[valid_rows]
+            # ok now we have the idx array we can really work with..
+            invalid_low = idx < 0
+            invalid_high = idx >= len(data)
+            invalid = invalid_low | invalid_high
+            idx_invalid = idx.copy()
+            idx[invalid_low] = 0
+            idx[invalid_high] = len(data) - 1
+            meta = idx, idx_invalid, invalid_low, invalid_high, invalid
+        else:
+            idx, idx_invalid, invalid_low, invalid_high, invalid = meta
+
+        tmp = data[idx]
+        # correct invalid time stamps..
+        tmp['time'][invalid_low] += idx_invalid[invalid_low] * self.delta_ns
+        tmp['time'][invalid_high] += (
+            idx_invalid[invalid_high] - (len(data) - 1)) * self.delta_ns
+        tmp['i95'][invalid] = np.nan
+        tmp['i95'][invalid] = np.nan
+        tmp['coverage'][invalid] = 0
+        if out is None:
+            # setup out array
+            out = np.ma.empty(len(tmp), dtype=data.dtype)
+            out.mask = False
+        # sanity check on the timestamp array..
+        assert np.all(np.diff(tmp['time'], axis=1) == self.delta_ns)
+        # mean calculation on nanoseconds in int64 will overflow, so work
+        # around by going to milliseconds temporarily
+        # seems numpy mean doesn't always respect the specified dtype..
+        # so do astype() on top
+        out['time'] = np.mean(
+            tmp['time'] / 1000000, axis=1,
+            dtype=self.dtype['time']).astype(self.dtype['time']) * 1000000
+        if self._smoothing_mean:
+            tmp_i95 = tmp['i95']
+            if self._smoothing_percentile < 100:
+                percentiles = np.nanpercentile(
+                    tmp_i95, q=self._smoothing_percentile, axis=1)
+                for row, percentile in zip(tmp_i95, percentiles):
+                    row[row > percentile] = np.nan
+            out['i95'] = np.nanmean(tmp_i95, axis=1)
+        else:
+            out['i95'] = np.nanpercentile(
+                tmp['i95'], q=self._smoothing_percentile, axis=1)
+        i95_invalid = (
+            np.isnan(tmp['i95']).sum(axis=1) >= self._smoothing_valid_count)
+        # tmp['i95'] = np.ma.masked_array(z, mask=invalid_rows)
+        out['i95'].mask = i95_invalid
+        # XXX check what happens with masked values in mean calculation
+        out['coverage'] = np.mean(tmp['coverage'], axis=1)
+        return out, meta
 
     def _get_filenames(self, network, station, location, channel, starttime,
                        endtime, merge_streams=False):
@@ -128,7 +269,9 @@ class I95SDSClient(object):
                                         merge_streams=merge_streams)
         num_days = len(filenames)
 
-        if out is None:
+        # if smoothing is used, the provided out array is used for storing the
+        # final smoothed array, not the then temporary full array..
+        if out is None or self._do_smoothing:
             # prepare array that will be filled with all individual data pieces
             # data = np.zeros(len(filenames) * self.len, dtype=self.dtype)
             data = np.ma.empty(num_days * self.len, dtype=self.dtype)
@@ -209,6 +352,8 @@ class I95SDSClient(object):
 
         label = _label_for_used_channels(network, station, location,
                                          used_channels)
+        # finally, apply smoothing, if selected
+        data = self._smooth(data, out=out)
         return data, sorted(used_channels), label
 
     @staticmethod
@@ -248,17 +393,25 @@ class I95SDSClient(object):
         # print(data)
         return data
 
-    def get_data_multiple_nslc(self, nslc, starttime, endtime):
-        num_days = (int(endtime.matplotlib_date) -
-                    int(starttime.matplotlib_date) + 1)
-        data = np.ma.empty((len(nslc), num_days * self.len), dtype=self.dtype)
-        mem_address = data.__array_interface__['data'][0]
-        data.mask = False
+    def get_data_multiple_nslc(self, nslc, starttime, endtime, merge_streams=True):
         used_channels = []
         labels = []
-        for (n, s, l, c), data_ in zip(nslc, data):
-            _, used_channels_, label = self.get_data(
-                n, s, l, c, starttime, endtime, out=data_)
+        # due to smoothing we only really know the shape of the resulting array
+        # after the first get_data() call
+        data = None
+        out = None
+        for i, (n, s, l, c) in enumerate(nslc):
+            if i > 0:
+                out = data[i]
+            smoothed_1d, used_channels_, label = self.get_data(
+                n, s, l, c, starttime, endtime, out=out,
+                merge_streams=merge_streams)
+            if i == 0:
+                data = np.ma.empty((len(nslc), len(smoothed_1d)),
+                                   dtype=self.dtype)
+                data.mask = False
+                mem_address = data.__array_interface__['data'][0]
+                data[i] = smoothed_1d
             labels.append(label)
             used_channels.append(used_channels_)
         data['time'].mask = False
@@ -267,14 +420,17 @@ class I95SDSClient(object):
         assert mem_address == data.__array_interface__['data'][0]
         return data, used_channels, labels
 
-    def plot_all_data(self, starttime, endtime, cmap=None, global_norm=False,
-                      colorbar=True, merge_streams=False, show=True):
-        nslc = self.client.get_all_nslc()
+    def plot_all_data(self, starttime, endtime, nslc=None, cmap=None,
+                      global_norm=False, colorbar=True, merge_streams=True,
+                      show=True):
+        if nslc is None:
+            nslc = self.client.get_all_nslc()
+
         if merge_streams:
             nslc = self._merge_streams_in_nslc(nslc)
 
         data, used_channels, labels = self.get_data_multiple_nslc(
-            nslc, starttime, endtime)
+            nslc, starttime, endtime, merge_streams=merge_streams)
 
         # remove ids that have no data in given time range
         valid = [i for i, d in enumerate(data)
@@ -356,11 +512,12 @@ class I95SDSClient(object):
                 cb_bottom = ax_bottom
                 cb_top = cb_bottom + ax_height
                 cb_individual_height = (cb_top - cb_bottom) / data.shape[0]
+                margin = cb_individual_height * 0.05
                 for i, im in enumerate(ax.images):
                     cax_left = ax_left + ax_width + 0.04
-                    cax_bottom = ax_bottom + i * cb_individual_height + 0.01
+                    cax_bottom = ax_bottom + i * cb_individual_height + margin
                     cax_width = 0.02
-                    cax_height = cb_individual_height - 0.02
+                    cax_height = cb_individual_height - (2 * margin)
                     cax_rect = [cax_left, cax_bottom, cax_width, cax_height]
                     cax = ax.figure.add_axes(cax_rect)
                     cb = plt.colorbar(mappable=im, cax=cax)
