@@ -420,9 +420,16 @@ class I95SDSClient(object):
         assert mem_address == data.__array_interface__['data'][0]
         return data, used_channels, labels
 
-    def plot_all_data(self, starttime, endtime, nslc=None, cmap=None,
-                      global_norm=False, colorbar=True, merge_streams=True,
-                      show=True):
+    def plot_all_data(self, starttime, endtime, type='image', nslc=None,
+                      cmap=None, global_norm=False, colorbar=True,
+                      merge_streams=True, verbose=False, show=True):
+        """
+        :param type: ``'image'``, ``'line'`` or ``'violin'``
+        """
+        if type not in ('image', 'line', 'violin'):
+            msg = "option 'type' must be either 'image', 'line' or 'violin'"
+            raise ValueError(msg)
+
         if nslc is None:
             nslc = self.client.get_all_nslc()
 
@@ -440,29 +447,38 @@ class I95SDSClient(object):
                          if i in valid]
         labels = [item for i, item in enumerate(labels) if i in valid]
 
-        # plotting of data parts
-        vmin_global = np.nanmin(data['i95'])
-        # vmax_global = np.nanmax(data['i95'])
-        vmax_global = np.nanpercentile(data['i95'],
-                                       q=self.vmax_clip_percentile)
-        vmin = None
-        vmax = None
-        if global_norm:
-            vmin = vmin_global
-            vmax = vmax_global
         fig, ax = plt.subplots()
-        channels = [_merge_stream_labels(chas) for chas in used_channels]
-        labels = ['.'.join((n, s, l, c))
-                  for (n, s, l, _), c in zip(nslc, channels)]
-        self._plot(
-            ax, data, labels, cmap=cmap,
-            colorbar=colorbar, vmin=vmin, vmax=vmax, global_norm=global_norm)
+        if type == 'image':
+            # plotting of data parts
+            vmin_global = np.nanmin(data['i95'])
+            # vmax_global = np.nanmax(data['i95'])
+            vmax_global = np.nanpercentile(data['i95'],
+                                           q=self.vmax_clip_percentile)
+            vmin = None
+            vmax = None
+            if global_norm:
+                vmin = vmin_global
+                vmax = vmax_global
+            channels = [_merge_stream_labels(chas) for chas in used_channels]
+            labels = ['.'.join((n, s, l, c))
+                      for (n, s, l, _), c in zip(nslc, channels)]
+            self._plot_image(
+                ax, data, labels, cmap=cmap,
+                colorbar=colorbar, vmin=vmin, vmax=vmax,
+                global_norm=global_norm)
+        elif type == 'line':
+            self._plot_lines(ax, data, labels)
+        elif type == 'violin':
+            self._plot_violin(ax, data, labels, verbose=verbose)
+        else:
+            raise ValueError
+
         if show:
             plt.show()
         return fig, ax
 
-    def _plot(self, ax, data, label, cmap=None, colorbar=True,
-              vmin=None, vmax=None, global_norm=True):
+    def _plot_image(self, ax, data, label, cmap=None, colorbar=True,
+                    vmin=None, vmax=None, global_norm=True):
         if vmin is None:
             vmin = np.nanmin(data['i95'])
         if vmax is None:
@@ -542,13 +558,77 @@ class I95SDSClient(object):
         ax.figure.canvas.draw_idle()
         return cb
 
+    def _plot_lines(self, ax, data, labels, legend=True):
+        if data.ndim == 1:
+            data = [data]
+            labels = [labels]
+        for data_, label in zip(data, labels):
+            times = date2num([UTCDateTime(ns=t).datetime
+                              for t in data_['time']])
+            ax.plot(times, data_['i95'], label=label)
+        if legend:
+            ax.legend()
+        ax.set_ylabel('I95 [nm/s]')
+
+        # fig/ax tweaks
+        ax.xaxis_date()
+        ax.xaxis.set_major_formatter(
+            ObsPyAutoDateFormatter(ax.xaxis.get_major_locator()))
+        ax.figure.autofmt_xdate()
+        ax.figure.canvas.draw_idle()
+
+    def _plot_violin(self, ax, data, labels, verbose=False):
+        import seaborn as sns
+
+        if data.ndim == 1:
+            labels = [labels]
+            data = [data['i95'][~data['i95'].mask]]
+        else:
+            data = [d['i95'][~d['i95'].mask] for d in data]
+
+        if verbose:
+            for d, label in zip(data, labels):
+                print(label)
+                for perc in (50, 68, 80, 90, 95, 99):
+                    value = np.nanpercentile(d, q=perc)
+                    print('  {:d}th percentile: {:6.1f} nm/s'.format(
+                        perc, value))
+
+        # avoid extreme spikes in the plot
+        y_min = np.inf
+        y_max = -np.inf
+        for i, d in enumerate(data):
+            value = np.nanpercentile(d, 95)
+            y_max = max(y_max, value)
+            y_min = min(y_min, np.nanmin(d))
+
+        sns.violinplot(data=data, ax=ax, orient="v", cut=0, gridsize=1000)
+        ax.set_ylim(y_min, y_max)
+        ax.set_xticklabels(labels)
+        ax.set_ylabel('I95 [nm/s]')
+
+        # fig/ax tweaks
+        ax.figure.canvas.draw_idle()
+
     def plot(self, network, station, location, channel, starttime, endtime,
-             cmap=None, show=True):
+             type='image', cmap=None, verbose=False, show=True):
+        """
+        :param type: ``'image'``, ``'line'`` or ``'violin'``
+        """
         data, used_channels, label = self.get_data(
             network, station, location, channel, starttime, endtime)
 
         fig, ax = plt.subplots()
-        self._plot(ax, data, label, cmap=cmap)
+        if type == 'image':
+            self._plot_image(ax, data, label, cmap=cmap)
+        elif type == 'line':
+            self._plot_lines(ax, data, label)
+        elif type == 'violin':
+            self._plot_violin(ax, data, label, verbose=verbose)
+        else:
+            msg = "option 'type' must be either 'image', 'line' or 'violin'"
+            raise ValueError(msg)
+
         if show:
             plt.show()
         return fig, ax
