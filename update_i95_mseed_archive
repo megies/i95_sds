@@ -19,6 +19,7 @@ from argparse import ArgumentParser, RawDescriptionHelpFormatter
 # lead to errors)
 import matplotlib as mpl
 mpl.use("AGG")
+import matplotlib.pyplot as plt
 
 import numpy as np
 
@@ -142,6 +143,7 @@ def _plot_debug_image(t, i, tr, label, sds_root_i95):
     filename = os.path.join(directory, '{!s}_{!s}_{}.png'.format(
         t, i, label))
     tr.plot(outfile=filename)
+    plt.close('all')
 
 
 def main(argv=None):
