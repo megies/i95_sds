@@ -1,9 +1,12 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 import os
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
 from matplotlib.dates import date2num
+from matplotlib.transforms import blended_transform_factory
+
 import numpy as np
 
 from obspy import UTCDateTime
@@ -422,9 +425,11 @@ class I95SDSClient(object):
 
     def plot_all_data(self, starttime, endtime, type='image', nslc=None,
                       cmap=None, global_norm=False, colorbar=True,
-                      merge_streams=True, verbose=False, show=True):
+                      merge_streams=True, verbose=False, show=True, ax=None,
+                      scale=None):
         """
         :param type: ``'image'``, ``'line'`` or ``'violin'``
+        :param scale: ``'nm/s'``, ``'mum/s'``, ``'mm/s'``, ``'m/s'``
         """
         if type not in ('image', 'line', 'violin'):
             msg = "option 'type' must be either 'image', 'line' or 'violin'"
@@ -447,7 +452,11 @@ class I95SDSClient(object):
                          if i in valid]
         labels = [item for i, item in enumerate(labels) if i in valid]
 
-        fig, ax = plt.subplots()
+        if ax:
+            fig = ax.figure
+        else:
+            fig, ax = plt.subplots()
+
         if type == 'image':
             # plotting of data parts
             vmin_global = np.nanmin(data['i95'])
@@ -467,9 +476,9 @@ class I95SDSClient(object):
                 colorbar=colorbar, vmin=vmin, vmax=vmax,
                 global_norm=global_norm)
         elif type == 'line':
-            self._plot_lines(ax, data, labels)
+            self._plot_lines(ax, data, labels, scale=scale)
         elif type == 'violin':
-            self._plot_violin(ax, data, labels, verbose=verbose)
+            self._plot_violin(ax, data, labels, verbose=verbose, scale=scale)
         else:
             raise ValueError
 
@@ -478,14 +487,19 @@ class I95SDSClient(object):
         return fig, ax
 
     def _plot_image(self, ax, data, label, cmap=None, colorbar=True,
-                    vmin=None, vmax=None, global_norm=True):
+                    vmin=None, vmax=None, global_norm=True, scale=None):
+        if scale is None:
+            scale = data['i95']
+        scaling_factor, unit_label = _get_scale(scale)
+
         if vmin is None:
-            vmin = np.nanmin(data['i95'])
+            vmin = np.nanmin(data['i95'] * scaling_factor)
         if vmax is None:
             # vmax = np.nanmax(data['i95'])
             # clip vmax at given percentile
             # XXX remove this??
-            vmax = np.nanpercentile(data['i95'], q=self.vmax_clip_percentile)
+            vmax = np.nanpercentile(data['i95'] * scaling_factor,
+                                    q=self.vmax_clip_percentile)
             # print vmax
         # print(vmin, vmax)
         cmap = cmap or viridis
@@ -501,7 +515,7 @@ class I95SDSClient(object):
         # print(half_delta)
         cb = None
         if data.ndim == 1 or global_norm:
-            im = ax.imshow(np.atleast_2d(data['i95']),
+            im = ax.imshow(np.atleast_2d(data['i95'] * scaling_factor),
                            extent=[start, end, 0, data.shape[0]], vmin=vmin,
                            vmax=vmax, cmap=cmap, interpolation='nearest',
                            aspect='auto')
@@ -510,10 +524,10 @@ class I95SDSClient(object):
                 cb.set_label('I95 [nm/s]')
         else:
             for i, data_ in enumerate(data[::-1]):
-                vmin = np.nanmin(data_['i95'])
-                vmax = np.nanpercentile(data_['i95'],
+                vmin = np.nanmin(data_['i95'] * scaling_factor)
+                vmax = np.nanpercentile(data_['i95'] * scaling_factor,
                                         q=self.vmax_clip_percentile)
-                im = ax.imshow(np.atleast_2d(data_['i95']),
+                im = ax.imshow(np.atleast_2d(data_['i95'] * scaling_factor),
                                extent=[start, end, 0 + i, 1 + i], vmin=vmin,
                                vmax=vmax, cmap=cmap, interpolation='nearest',
                                aspect='auto')
@@ -537,7 +551,7 @@ class I95SDSClient(object):
                     cax_rect = [cax_left, cax_bottom, cax_width, cax_height]
                     cax = ax.figure.add_axes(cax_rect)
                     cb = plt.colorbar(mappable=im, cax=cax)
-                    cb.set_label('I95 [nm/s]')
+                    cb.set_label('I95 [%s]' % unit_label)
 
         # fig/ax tweaks
         ax.xaxis_date()
@@ -558,17 +572,21 @@ class I95SDSClient(object):
         ax.figure.canvas.draw_idle()
         return cb
 
-    def _plot_lines(self, ax, data, labels, legend=True):
+    def _plot_lines(self, ax, data, labels, legend=True, scale=None):
+        if scale is None:
+            scale = data['i95']
+        scaling_factor, unit_label = _get_scale(scale)
+
         if data.ndim == 1:
             data = [data]
             labels = [labels]
         for data_, label in zip(data, labels):
             times = date2num([UTCDateTime(ns=t).datetime
                               for t in data_['time']])
-            ax.plot(times, data_['i95'], label=label)
+            ax.plot(times, data_['i95'] * scaling_factor, label=label)
         if legend:
             ax.legend()
-        ax.set_ylabel('I95 [nm/s]')
+        ax.set_ylabel('I95 [%s]' % unit_label)
 
         # fig/ax tweaks
         ax.xaxis_date()
@@ -577,14 +595,19 @@ class I95SDSClient(object):
         ax.figure.autofmt_xdate()
         ax.figure.canvas.draw_idle()
 
-    def _plot_violin(self, ax, data, labels, verbose=False):
+    def _plot_violin(self, ax, data, labels, verbose=False, percentiles=None,
+                     scale=None):
         import seaborn as sns
+
+        if scale is None:
+            scale = data['i95']
+        scaling_factor, unit_label = _get_scale(scale)
 
         if data.ndim == 1:
             labels = [labels]
-            data = [data['i95'][~data['i95'].mask]]
+            data = [data['i95'][~data['i95'].mask] * scaling_factor]
         else:
-            data = [d['i95'][~d['i95'].mask] for d in data]
+            data = [d['i95'][~d['i95'].mask] * scaling_factor for d in data]
 
         if verbose:
             for d, label in zip(data, labels):
@@ -605,26 +628,43 @@ class I95SDSClient(object):
         sns.violinplot(data=data, ax=ax, orient="v", cut=0, gridsize=1000)
         ax.set_ylim(y_min, y_max)
         ax.set_xticklabels(labels)
-        ax.set_ylabel('I95 [nm/s]')
+        ax.set_ylabel('I95 [%s]' % unit_label)
+
+        if percentiles:
+            trans = blended_transform_factory(ax.transAxes, ax.transData)
+            kwargs = dict(va='bottom', transform=trans, color='k', zorder=5)
+            for perc in percentiles:
+                value = np.nanpercentile(d, perc)
+                ax.axhline(value, color='k', zorder=5)
+                ax.text(0.02, value, '%s%%' % perc, ha='left', **kwargs)
+                ax.text(0.98, value, '%.2g' % value, ha='right', **kwargs)
 
         # fig/ax tweaks
         ax.figure.canvas.draw_idle()
 
     def plot(self, network, station, location, channel, starttime, endtime,
-             type='image', cmap=None, verbose=False, show=True):
+             type='image', cmap=None, verbose=False, show=True, ax=None,
+             percentiles=None, scale=None):
         """
         :param type: ``'image'``, ``'line'`` or ``'violin'``
+        :type percentiles: list of float
+        :param scale: ``'nm/s'``, ``'mum/s'``, ``'mm/s'``, ``'m/s'``
         """
         data, used_channels, label = self.get_data(
             network, station, location, channel, starttime, endtime)
 
-        fig, ax = plt.subplots()
+        if ax:
+            fig = ax.figure
+        else:
+            fig, ax = plt.subplots()
+
         if type == 'image':
-            self._plot_image(ax, data, label, cmap=cmap)
+            self._plot_image(ax, data, label, cmap=cmap, scale=scale)
         elif type == 'line':
-            self._plot_lines(ax, data, label)
+            self._plot_lines(ax, data, label, scale=scale)
         elif type == 'violin':
-            self._plot_violin(ax, data, label, verbose=verbose)
+            self._plot_violin(ax, data, label, verbose=verbose,
+                              percentiles=percentiles, scale=scale)
         else:
             msg = "option 'type' must be either 'image', 'line' or 'violin'"
             raise ValueError(msg)
@@ -673,7 +713,7 @@ class I95SDSClient(object):
         return data, labels
 
     def plot_availability(self, starttime, endtime, fast=True,
-                          merge_streams=False, show=True, grid=True):
+                          merge_streams=False, show=True, grid=True, ax=None):
         if not fast:
             raise NotImplementedError
 
@@ -695,7 +735,11 @@ class I95SDSClient(object):
         bounds = [-1.5, -0.5, 0.5, 1.5]
         norm = BoundaryNorm(bounds, cmap.N)
 
-        fig, ax = plt.subplots()
+        if ax:
+            fig = ax.figure
+        else:
+            fig, ax = plt.subplots()
+
         ax.imshow(data, extent=extent, interpolation='nearest',
                   aspect='auto', cmap=cmap, norm=norm)
         ax.set_yticks(np.arange(len(data)) + 0.5)
@@ -717,6 +761,46 @@ class I95SDSClient(object):
         if show:
             plt.show()
         return fig, ax
+
+
+def _get_scale(data, initial_scale=1e9):
+    """
+    :type data: np.ndarray or str
+    :param data: Array with data or one of ``'nm/s'``, ``'mum/s'``, ``'mm/s'``,
+        ``'m/s'``
+    :param initial_scale: Initial scaling of data (e.g. 1e9 for nm/s data)
+    :rtype: (float, str)
+    :returns: Scaling factor for data and corresponding units for axis label
+    """
+    if isinstance(data, np.ndarray):
+        if np.ma.is_masked:
+            data = data[~data.mask]
+        data_max = data.max()
+        if data_max < 1e-6:
+            data = 'nm/s'
+        elif data_max < 1e-3:
+            data = 'mum/s'
+        elif data_max < 1:
+            data = 'mm/s'
+        else:
+            data = 'm/s'
+
+    if data == 'nm/s':
+        scalefac = 1e9
+        unit_label = "nm/s"
+    elif data == 'mum/s':
+        scalefac = 1e6
+        unit_label = u"µm/s"
+    elif data == 'mm/s':
+        scalefac = 1e3
+        unit_label = "mm/s"
+    elif data == 'm/s':
+        scalefac = 1.0
+        unit_label = "m/s"
+    else:
+        raise ValueError()
+
+    return scalefac / initial_scale, unit_label
 
 
 if __name__ == '__main__':
