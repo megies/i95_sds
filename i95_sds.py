@@ -3,7 +3,8 @@
 import os
 
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.colors import ListedColormap, BoundaryNorm, Normalize
+from matplotlib.cm import get_cmap
 from matplotlib.dates import date2num
 from matplotlib.transforms import blended_transform_factory
 
@@ -378,6 +379,20 @@ class I95SDSClient(object):
             return 0
         return 100
 
+    @staticmethod
+    def _accurate_availability_for_filename(filename):
+        """
+        Accurate availability as daily percentage.
+
+        Returns a floating point number between 0 and 100.
+        """
+        fast_avail = I95SDSClient._fast_availability_for_filename(filename)
+        if fast_avail in (-1, 0):
+            return fast_avail
+
+        data = np.load(filename)
+        return data['coverage'].mean()
+
     def _load_npy_file(self, filename):
         if not os.path.exists(filename):
             return None
@@ -675,9 +690,6 @@ class I95SDSClient(object):
 
     def _get_availability(self, starttime, endtime, fast=True,
                           merge_streams=False):
-        if not fast:
-            raise NotImplementedError
-
         nslc = self.client.get_all_nslc()
         if merge_streams:
             nslc = self._merge_streams_in_nslc(nslc)
@@ -686,7 +698,11 @@ class I95SDSClient(object):
         end_day = int(endtime.matplotlib_date)
         num_days = end_day - start_day + 1
 
-        data = np.empty((len(nslc), num_days), dtype=np.int8)
+        if fast:
+            dtype = np.int8
+        else:
+            dtype = np.float32
+        data = np.empty((len(nslc), num_days), dtype=dtype)
         data.fill(-1)
 
         labels = []
@@ -699,26 +715,37 @@ class I95SDSClient(object):
             for filenames_ in filenames:
                 for cha_, filename in filenames_:
                     index = _filename_to_mpl_day(filename) - start_day
-                    avail_ = self._fast_availability_for_filename(filename)
-                    if avail_ > 0:
+                    if fast:
+                        avail_ = self._fast_availability_for_filename(filename)
+                    else:
+                        avail_ = self._accurate_availability_for_filename(
+                            filename)
+                    if avail_ >= 0:
                         used_channels.add(cha_)
                     avail_ = min(avail_, 100)
                     # XXX this might not be exact for transition days (days
                     # when e.g. EH and HH have both data for half the day), in
                     # which case we would have to add up both availability
                     # parts. but right now we set only 0% or 100% anyway
+                    # (at least with fast=True)
                     data_[index] = max(avail_, data_[index])
             label = _label_for_used_channels(net, sta, loc, used_channels)
             labels.append(label)
         return data, labels
 
     def plot_availability(self, starttime, endtime, fast=True,
-                          merge_streams=False, show=True, grid=True, ax=None):
-        if not fast:
-            raise NotImplementedError
-
+                          merge_streams=False, show=True, grid=True, ax=None,
+                          verbose=False, vmin=0, vmax=100,
+                          number_of_colors=None):
         data, labels = self._get_availability(
             starttime, endtime, fast=fast, merge_streams=merge_streams)
+
+        if verbose:
+            print('availability:')
+            for data_, label in zip(data, labels):
+                print('  %s: %.2f/%.2f/%.2f/%.2f  (min/mean/median/max)' % (
+                    label, data_.min(), data_.mean(), np.median(data_),
+                    data_.max()))
 
         start_day = int(starttime.matplotlib_date)
         end_day = int(endtime.matplotlib_date) + 1
@@ -731,17 +758,24 @@ class I95SDSClient(object):
         #   0 in data means: processed but no waveform data encountered for day
         # 100 in data means: at least partial data encountered for given day
         #                    (actual coverage data is not read in fast mode)
-        cmap = ListedColormap(['lightgray', 'red', 'green'])
-        bounds = [-1.5, -0.5, 0.5, 1.5]
-        norm = BoundaryNorm(bounds, cmap.N)
+        if fast:
+            cmap = ListedColormap(['lightgray', 'red', 'green'])
+            bounds = [-1.5, -0.5, 0.5, 1.5]
+            norm = BoundaryNorm(bounds, cmap.N)
+        else:
+            if number_of_colors is None:
+                cmap = 'viridis'
+            else:
+                cmap = get_cmap('viridis', lut=number_of_colors)
+            norm = Normalize(vmin=vmin, vmax=vmax)
 
         if ax:
             fig = ax.figure
         else:
             fig, ax = plt.subplots()
 
-        ax.imshow(data, extent=extent, interpolation='nearest',
-                  aspect='auto', cmap=cmap, norm=norm)
+        im = ax.imshow(data, extent=extent, interpolation='nearest',
+                       aspect='auto', cmap=cmap, norm=norm)
         ax.set_yticks(np.arange(len(data)) + 0.5)
         if grid:
             grid_y = np.arange(len(data) + 1)
@@ -756,6 +790,11 @@ class I95SDSClient(object):
         ax.xaxis.set_major_formatter(
             ObsPyAutoDateFormatter(ax.xaxis.get_major_locator()))
         fig.autofmt_xdate()
+
+        if not fast:
+            cb = fig.colorbar(mappable=im, ax=ax)
+            cb.set_label('Daily data coverage [%]')
+
         fig.tight_layout()
 
         if show:
