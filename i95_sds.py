@@ -637,7 +637,7 @@ class I95SDSClient(object):
                 value = np.nanpercentile(d, perc)
                 ax.axhline(value, color='k', zorder=5)
                 ax.text(0.02, value, '%s%%' % perc, ha='left', **kwargs)
-                ax.text(0.98, value, '%.2g' % value, ha='right', **kwargs)
+                ax.text(0.98, value, '%#.2g' % value, ha='right', **kwargs)
 
         # fig/ax tweaks
         ax.figure.canvas.draw_idle()
