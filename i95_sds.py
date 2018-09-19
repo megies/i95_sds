@@ -442,7 +442,8 @@ class I95SDSClient(object):
     def plot_all_data(self, starttime, endtime, type='image', nslc=None,
                       cmap=None, global_norm=False, colorbar=True,
                       merge_streams=True, verbose=False, show=True, ax=None,
-                      scale=None, percentiles=None):
+                      scale=None, percentiles=None, color=None,
+                      violin_kwargs=None):
         """
         :param type: ``'image'``, ``'line'`` or ``'violin'``
         :param scale: ``'nm/s'``, ``'mum/s'``, ``'mm/s'``, ``'m/s'``
@@ -495,7 +496,8 @@ class I95SDSClient(object):
             self._plot_lines(ax, data, labels, scale=scale)
         elif type == 'violin':
             self._plot_violin(ax, data, labels, verbose=verbose, scale=scale,
-                              percentiles=percentiles)
+                              percentiles=percentiles, color=color,
+                              violin_kwargs=violin_kwargs)
         else:
             raise ValueError
 
@@ -592,7 +594,8 @@ class I95SDSClient(object):
         ax.figure.canvas.draw_idle()
         return cb
 
-    def _plot_lines(self, ax, data, labels, legend=True, scale=None):
+    def _plot_lines(self, ax, data, labels, legend=True, scale=None,
+                    color=None):
         if scale is None:
             scale = data['i95']
         scaling_factor, unit_label = _get_scale(scale)
@@ -603,7 +606,8 @@ class I95SDSClient(object):
         for data_, label in zip(data, labels):
             times = date2num([UTCDateTime(ns=t).datetime
                               for t in data_['time']])
-            ax.plot(times, data_['i95'] * scaling_factor, label=label)
+            ax.plot(times, data_['i95'] * scaling_factor, label=label, lw=0.5,
+                    color=color)
         if legend:
             ax.legend()
         ax.set_ylabel('I95 [%s]' % unit_label)
@@ -616,8 +620,11 @@ class I95SDSClient(object):
         ax.figure.canvas.draw_idle()
 
     def _plot_violin(self, ax, data, labels, verbose=False, percentiles=None,
-                     scale=None):
+                     scale=None, color=None, violin_kwargs=None):
         import seaborn as sns
+
+        if violin_kwargs is None:
+            violin_kwargs = {}
 
         if scale is None:
             scale = data['i95']
@@ -645,7 +652,8 @@ class I95SDSClient(object):
             y_max = max(y_max, value)
             y_min = min(y_min, np.nanmin(d))
 
-        sns.violinplot(data=data, ax=ax, orient="v", cut=0, gridsize=1000)
+        sns.violinplot(data=data, ax=ax, orient="v", cut=0, gridsize=1000,
+                       color=color, **violin_kwargs)
         ax.set_ylim(y_min, y_max)
         ax.set_xticklabels(labels)
         ax.set_ylabel('I95 [%s]' % unit_label)
@@ -669,7 +677,7 @@ class I95SDSClient(object):
 
     def plot(self, network, station, location, channel, starttime, endtime,
              type='image', cmap=None, verbose=False, show=True, ax=None,
-             percentiles=None, scale=None):
+             percentiles=None, scale=None, color=None, violin_kwargs=None):
         """
         :param type: ``'image'``, ``'line'`` or ``'violin'``
         :type percentiles: list of float
@@ -686,10 +694,11 @@ class I95SDSClient(object):
         if type == 'image':
             self._plot_image(ax, data, label, cmap=cmap, scale=scale)
         elif type == 'line':
-            self._plot_lines(ax, data, label, scale=scale)
+            self._plot_lines(ax, data, label, scale=scale, color=color)
         elif type == 'violin':
             self._plot_violin(ax, data, label, verbose=verbose,
-                              percentiles=percentiles, scale=scale)
+                              percentiles=percentiles, scale=scale,
+                              color=color, violin_kwargs=violin_kwargs)
         else:
             msg = "option 'type' must be either 'image', 'line' or 'violin'"
             raise ValueError(msg)
@@ -760,7 +769,7 @@ class I95SDSClient(object):
     def plot_availability(self, starttime, endtime, fast=True,
                           merge_streams=False, show=True, grid=True, ax=None,
                           verbose=False, vmin=0, vmax=100,
-                          number_of_colors=None):
+                          number_of_colors=None, percentage_in_label=True):
         data, labels = self._get_availability(
             starttime, endtime, fast=fast, merge_streams=merge_streams)
 
@@ -806,6 +815,16 @@ class I95SDSClient(object):
 
         im = ax.imshow(data, extent=extent, interpolation='nearest',
                        aspect='auto', cmap=cmap, norm=norm)
+
+        if percentage_in_label:
+            if fast:
+                msg = ("Option 'percentage_in_label' not available together "
+                       "with option 'fast'.")
+                raise ValueError(msg)
+            data = data.filled(0.0)
+            for i, d in enumerate(data):
+                labels[i] += ' (%#.1f%%)' % d.mean()
+
         ax.set_yticks(np.arange(len(data)) + 0.5)
         if grid:
             grid_y = np.arange(len(data) + 1)
