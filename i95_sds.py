@@ -442,7 +442,7 @@ class I95SDSClient(object):
     def plot_all_data(self, starttime, endtime, type='image', nslc=None,
                       cmap=None, global_norm=False, colorbar=True,
                       merge_streams=True, verbose=False, show=True, ax=None,
-                      scale=None):
+                      scale=None, percentiles=None):
         """
         :param type: ``'image'``, ``'line'`` or ``'violin'``
         :param scale: ``'nm/s'``, ``'mum/s'``, ``'mm/s'``, ``'m/s'``
@@ -494,9 +494,13 @@ class I95SDSClient(object):
         elif type == 'line':
             self._plot_lines(ax, data, labels, scale=scale)
         elif type == 'violin':
-            self._plot_violin(ax, data, labels, verbose=verbose, scale=scale)
+            self._plot_violin(ax, data, labels, verbose=verbose, scale=scale,
+                              percentiles=percentiles)
         else:
             raise ValueError
+
+        fig.autofmt_xdate()
+        fig.tight_layout()
 
         if show:
             plt.show()
@@ -630,7 +634,7 @@ class I95SDSClient(object):
                 print(label)
                 for perc in (50, 68, 80, 90, 95, 99):
                     value = np.nanpercentile(d, q=perc)
-                    print('  {:d}th percentile: {:6.1f} nm/s'.format(
+                    print('  {:d}th percentile: {:6.2f} nm/s'.format(
                         perc, value))
 
         # avoid extreme spikes in the plot
@@ -647,13 +651,18 @@ class I95SDSClient(object):
         ax.set_ylabel('I95 [%s]' % unit_label)
 
         if percentiles:
-            trans = blended_transform_factory(ax.transAxes, ax.transData)
-            kwargs = dict(va='bottom', transform=trans, color='k', zorder=5)
-            for perc in percentiles:
-                value = np.nanpercentile(d, perc)
-                ax.axhline(value, color='k', zorder=5)
-                ax.text(0.02, value, '%s%%' % perc, ha='left', **kwargs)
-                ax.text(0.98, value, '%#.2g' % value, ha='right', **kwargs)
+            kwargs = dict(va='bottom', color='k', zorder=5)
+            margin = 0.02
+            for i, d in enumerate(data):
+                for perc in percentiles:
+                    value = np.nanpercentile(d, perc)
+                    xmin = -0.5 + i
+                    xmax = xmin + 1
+                    ax.plot([xmin, xmax], [value, value], color='k', zorder=5)
+                    ax.text(xmin + margin, value, '%s%%' % perc, ha='left',
+                            **kwargs)
+                    ax.text(xmax - margin, value, '%#.2g' % value, ha='right',
+                            **kwargs)
 
         # fig/ax tweaks
         ax.figure.canvas.draw_idle()
@@ -684,6 +693,8 @@ class I95SDSClient(object):
         else:
             msg = "option 'type' must be either 'image', 'line' or 'violin'"
             raise ValueError(msg)
+
+        fig.tight_layout()
 
         if show:
             plt.show()
