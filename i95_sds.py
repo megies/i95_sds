@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import os
+import warnings
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm, Normalize
@@ -715,6 +716,9 @@ class I95SDSClient(object):
             for filenames_ in filenames:
                 for cha_, filename in filenames_:
                     index = _filename_to_mpl_day(filename) - start_day
+                    # make sure we get rid of -1 default entry if at least one
+                    # channel was processed for this day
+                    data_[index] = max(0, data_[index])
                     if fast:
                         avail_ = self._fast_availability_for_filename(filename)
                     else:
@@ -728,7 +732,16 @@ class I95SDSClient(object):
                     # which case we would have to add up both availability
                     # parts. but right now we set only 0% or 100% anyway
                     # (at least with fast=True)
-                    data_[index] = max(avail_, data_[index])
+                    # XXX corrected now, adding up availability of merged
+                    # streams, above comment obsolete
+                    data_[index] += avail_
+                    # make sure we don't exceed 100, should only happen with
+                    # numerical errors though?!
+                    if data_[index] > 100:
+                        msg = ('Data coverage for given day adds up to more '
+                               'than 100%, merged files: ' + str(filenames))
+                        warnings.warn(msg)
+                    data_[index] = min(data_[index], 100)
             label = _label_for_used_channels(net, sta, loc, used_channels)
             labels.append(label)
         return data, labels
@@ -768,11 +781,17 @@ class I95SDSClient(object):
             else:
                 cmap = get_cmap('viridis', lut=number_of_colors)
             norm = Normalize(vmin=vmin, vmax=vmax)
+            cmap.set_bad(color='lightgray')
 
         if ax:
             fig = ax.figure
         else:
             fig, ax = plt.subplots()
+
+        # for detailed plot, we mask days that were not even computed, so that
+        # they show up gray like in the fast plot
+        if not fast:
+            data = np.ma.masked_equal(data, -1)
 
         im = ax.imshow(data, extent=extent, interpolation='nearest',
                        aspect='auto', cmap=cmap, norm=norm)
