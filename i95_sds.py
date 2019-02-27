@@ -641,8 +641,8 @@ class I95SDSClient(object):
                 print(label)
                 for perc in (50, 68, 80, 90, 95, 99):
                     value = np.nanpercentile(d, q=perc)
-                    print('  {:d}th percentile: {:6.2f} nm/s'.format(
-                        perc, value))
+                    print('  {:d}th percentile: {:6.2f} {}'.format(
+                        perc, value, scale))
 
         # avoid extreme spikes in the plot
         y_min = np.inf
