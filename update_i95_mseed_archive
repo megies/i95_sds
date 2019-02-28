@@ -385,7 +385,7 @@ def main(argv=None):
             if verbose:
                 print('failed!')
             msg = ("Failed to fetch station metadata for '{}': "
-                   "{}").format('.'.join(net, sta, loc, cha), str(e))
+                   "{}").format('.'.join((net, sta, loc, cha)), str(e))
             logger.error(msg)
             warnings.warn(msg)
             return
