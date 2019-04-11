@@ -864,11 +864,11 @@ def _get_scale(data, initial_scale=1e9):
         if np.ma.is_masked:
             data = data[~data.mask]
         data_max = data.max()
-        if data_max < 1e-6:
+        if data_max < 1e-6 * initial_scale:
             data = 'nm/s'
-        elif data_max < 1e-3:
+        elif data_max < 1e-3 * initial_scale:
             data = 'mum/s'
-        elif data_max < 1:
+        elif data_max < 1 * initial_scale:
             data = 'mm/s'
         else:
             data = 'm/s'
