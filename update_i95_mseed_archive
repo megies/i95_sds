@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 
 import numpy as np
 
-from obspy import UTCDateTime
+from obspy import UTCDateTime, Inventory, read_inventory
 from obspy.clients.filesystem.sds import Client as SDSClient
 from obspy.clients.fdsn import Client as FDSNClient
 from obspy.clients.fdsn.header import FDSNException
@@ -64,6 +64,12 @@ EXAMPLE_PARAMETERS_JSON = """
 {
     "buffer_length": 120,
     "fdsn_base_url": "http://jane",
+    "inventories": [
+        "/bay200/stationxml_geothermie_extern/clean/SS20S.xml",
+        "/bay200/stationxml_geothermie_extern/clean/WM37S.xml",
+        "/bay200/stationxml_geothermie_extern/clean/ZBS8S.xml",
+        "/bay200/stationxml_geothermie_extern/clean/SWM1S.xml"
+    ],
     "filter_kwargs": {
         "corners": 4,
         "freqmax": 20.0,
@@ -174,7 +180,8 @@ def main(argv=None):
         '--stream', dest='streams', default=[], action='append', required=True,
         help='Stream to consider (i.e. first two characters of SEED channel '
              'code). This option can be specified multiple times (e.g. use '
-             '"-s HH -s EH -s EL"). Other streams that are not specified will '
+             '"--streams HH --streams EH --streams EL"). '
+             'Other streams that are not specified will '
              'be ignored (e.g. in the example, lower sample rate streams like '
              'BHZ')
     options.add_argument(
@@ -325,7 +332,10 @@ def main(argv=None):
         print(msg)
 
     sds_client_mseed = SDSClient(params['sds_root_waveforms'])
-    fdsn_client = FDSNClient(params['fdsn_base_url'])
+    if params['fdsn_base_url'] is None:
+        fdsn_client = None
+    else:
+        fdsn_client = FDSNClient(params['fdsn_base_url'])
     sds_client_npy = SDSClient(args.sds_root_i95)
     sds_client_npy.FMTSTR += ".npy"
     msg = 'Connected SDS/FDSN clients.'
@@ -333,8 +343,19 @@ def main(argv=None):
     if verbose:
         print(msg)
 
-    inv_all = fdsn_client.get_stations(
-        level='channel', format='text', starttime=t - 100, endtime=t_end + 100)
+    if fdsn_client:
+        inv_all = fdsn_client.get_stations(
+            level='channel', format='text', starttime=t - 100,
+            endtime=t_end + 100)
+    else:
+        inv_all = Inventory(networks=[], source='')
+    if 'inventories' in params and params['inventories']:
+        inv_local_files = Inventory(networks=[], source='')
+        for path in params['inventories']:
+            inv_local_files += read_inventory(path, format='STATIONXML')
+        inv_all += inv_local_files
+    else:
+        inv_local_files = None
     msg = 'Fetched station inventory summary from FDSN client.'
     logger.info(msg)
     if verbose:
@@ -377,20 +398,29 @@ def main(argv=None):
             return
 
         inv = None
-        try:
-            inv = fdsn_client.get_stations(
+        if inv_local_files:
+            inv = inv_local_files.select(
                 network=net, station=sta, location=loc, channel=cha,
-                level="response", starttime=t - 100, endtime=t_end + 100)
-        except FDSNException as e:
-            if verbose:
-                print('failed!')
-            msg = ("Failed to fetch station metadata for '{}': "
-                   "{}").format('.'.join((net, sta, loc, cha)), str(e))
-            logger.error(msg)
-            warnings.warn(msg)
-            return
-        msg = ('Fetched response information from FDSN client.')
-        logger.info(msg)
+                starttime=t - 100, endtime=t_end + 100)
+            if inv:
+                msg = ('Found response information in data from local '
+                       'inventory files.')
+                logger.info(msg)
+        if not inv and fdsn_client:
+            try:
+                inv = fdsn_client.get_stations(
+                    network=net, station=sta, location=loc, channel=cha,
+                    level="response", starttime=t - 100, endtime=t_end + 100)
+            except FDSNException as e:
+                if verbose:
+                    print('failed!')
+                msg = ("Failed to fetch station metadata for '{}': "
+                       "{}").format('.'.join((net, sta, loc, cha)), str(e))
+                logger.error(msg)
+                warnings.warn(msg)
+                return
+            msg = ('Fetched response information from FDSN client.')
+            logger.info(msg)
         if verbose:
             print(msg)
 
@@ -438,10 +468,13 @@ def main(argv=None):
                 tr.detrend("demean")
                 tr.taper(type="cosine", max_percentage=None,
                          max_length=params['buffer_length'] * 0.8, side="both")
-                tr.remove_response(
-                    inventory=inv, output="VEL",
-                    water_level=params['water_level'],
-                    pre_filt=params['pre_filt'], zero_mean=False, taper=False)
+                try:
+                    tr.remove_response(
+                        inventory=inv, output="VEL",
+                        water_level=params['water_level'],
+                        pre_filt=params['pre_filt'], zero_mean=False, taper=False)
+                except:
+                    import pdb; pdb.set_trace()
                 if debug:
                     _plot_debug_image(t_, j, tr, '1_deconvolved',
                                       args.sds_root_i95)
