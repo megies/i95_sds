@@ -652,8 +652,16 @@ class I95SDSClient(object):
             y_max = max(y_max, value)
             y_min = min(y_min, np.nanmin(d))
 
+        if isinstance(color, tuple) or isinstance(color, list):
+            if len(color) == 4 and len(data) != len(color):
+                violin_kwargs['color'] = color
+            else:
+                violin_kwargs['palette'] = color
+        else:
+            violin_kwargs['color'] = color
+
         sns.violinplot(data=data, ax=ax, orient="v", cut=0, gridsize=1000,
-                       color=color, **violin_kwargs)
+                       **violin_kwargs)
         ax.set_ylim(y_min, y_max)
         ax.set_xticklabels(labels)
         ax.set_ylabel('I95 [%s]' % unit_label)
