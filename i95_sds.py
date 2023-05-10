@@ -206,13 +206,13 @@ class I95SDSClient(object):
         if self._smoothing_mean:
             tmp_i95 = tmp['i95']
             if self._smoothing_percentile < 100:
-                percentiles = np.nanpercentile(
+                percentiles = nanpercentile(
                     tmp_i95, q=self._smoothing_percentile, axis=1)
                 for row, percentile in zip(tmp_i95, percentiles):
                     row[row > percentile] = np.nan
             out['i95'] = np.nanmean(tmp_i95, axis=1)
         else:
-            out['i95'] = np.nanpercentile(
+            out['i95'] = nanpercentile(
                 tmp['i95'], q=self._smoothing_percentile, axis=1)
         i95_invalid = (
             np.isnan(tmp['i95']).sum(axis=1) >= self._smoothing_valid_count)
@@ -478,8 +478,8 @@ class I95SDSClient(object):
             # plotting of data parts
             vmin_global = np.nanmin(data['i95'])
             # vmax_global = np.nanmax(data['i95'])
-            vmax_global = np.nanpercentile(data['i95'],
-                                           q=self.vmax_clip_percentile)
+            vmax_global = nanpercentile(data['i95'],
+                                        q=self.vmax_clip_percentile)
             vmin = None
             vmax = None
             if global_norm:
@@ -520,8 +520,8 @@ class I95SDSClient(object):
             # vmax = np.nanmax(data['i95'])
             # clip vmax at given percentile
             # XXX remove this??
-            vmax = np.nanpercentile(data['i95'] * scaling_factor,
-                                    q=self.vmax_clip_percentile)
+            vmax = nanpercentile(data['i95'] * scaling_factor,
+                                 q=self.vmax_clip_percentile)
             # print vmax
         # print(vmin, vmax)
         cmap = cmap or viridis
@@ -547,8 +547,8 @@ class I95SDSClient(object):
         else:
             for i, data_ in enumerate(data[::-1]):
                 vmin = np.nanmin(data_['i95'] * scaling_factor)
-                vmax = np.nanpercentile(data_['i95'] * scaling_factor,
-                                        q=self.vmax_clip_percentile)
+                vmax = nanpercentile(data_['i95'] * scaling_factor,
+                                     q=self.vmax_clip_percentile)
                 im = ax.imshow(np.atleast_2d(data_['i95'] * scaling_factor),
                                extent=[start, end, 0 + i, 1 + i], vmin=vmin,
                                vmax=vmax, cmap=cmap, interpolation='nearest',
@@ -640,7 +640,7 @@ class I95SDSClient(object):
             for d, label in zip(data, labels):
                 print(label)
                 for perc in (50, 68, 80, 90, 95, 99):
-                    value = np.nanpercentile(d, q=perc)
+                    value = nanpercentile(d, q=perc)
                     print('  {:d}th percentile: {:6.2f} {}'.format(
                         perc, value, scale))
 
@@ -648,7 +648,7 @@ class I95SDSClient(object):
         y_min = np.inf
         y_max = -np.inf
         for i, d in enumerate(data):
-            value = np.nanpercentile(d, 95)
+            value = nanpercentile(d, 95)
             y_max = max(y_max, value)
             y_min = min(y_min, np.nanmin(d))
 
@@ -671,7 +671,7 @@ class I95SDSClient(object):
             margin = 0.02
             for i, d in enumerate(data):
                 for perc in percentiles:
-                    value = np.nanpercentile(d, perc)
+                    value = nanpercentile(d, perc)
                     xmin = -0.5 + i
                     xmax = xmin + 1
                     ax.plot([xmin, xmax], [value, value], color='k', zorder=5)
@@ -936,3 +936,22 @@ if __name__ == '__main__':
 
     print(data)
     print(labels)
+
+
+def nanpercentile(*args, **kwargs):
+    """
+    Work around weird numpy bug when trying to calculate percentiles on data
+    with NaNs with numpy's dedicated function `np.nanpercentile` but when there
+    are masked values as well.
+    Safest way is to copy data and fill masked values with NaNs.
+
+    See https://github.com/numpy/numpy/issues/21524
+    """
+    arr = args[0]
+    # if not a masked array, just use numpy out of the box
+    if not isinstance(arr, np.ma.MaskedArray):
+        return np.nanpercentile(*args, **kwargs)
+    # otherwise copy data for safety and fill masked values with NaN
+    arr = arr.copy()
+    arr = arr.filled(np.nan)
+    return np.nanpercentile(arr, *args[1:], **kwargs)
