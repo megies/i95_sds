@@ -17,9 +17,13 @@ from argparse import ArgumentParser, RawDescriptionHelpFormatter
 # import that accidentally could set a backend, so this is really just in
 # case.. to avoid unwanted interactive backends set on servers (which would
 # lead to errors)
-import matplotlib as mpl
-mpl.use("AGG")
-import matplotlib.pyplot as plt
+# XXX The following should not be needed anymore, since obspy for a long time
+# XXX has taken care not to import any matplotlib things that might
+# XXX inadvertently set an interactive backend, but if problems really occur
+# XXX this can be commented out as a fallback
+# XXX import matplotlib as mpl
+# XXX mpl.use("AGG")
+# XXX import matplotlib.pyplot as plt
 
 import numpy as np
 
@@ -114,6 +118,7 @@ def _write_result_npy(filename, data):
 
 
 def _plot_debug_image(t, i, tr, label, sds_root_i95):
+    import matplotlib.pyplot as plt
     t = UTCDateTime(ns=t)
     directory = os.path.join(sds_root_i95, 'debug', tr.id, t.strftime("%Y-%j"))
     if not os.path.exists(directory):
@@ -221,6 +226,8 @@ def main(argv=None):
     global logger
     logger = logging.getLogger()
     if debug:
+        import matplotlib as mpl
+        mpl.use("AGG")
         logger.setLevel(logging.DEBUG)
     else:
         logger.setLevel(logging.INFO)
