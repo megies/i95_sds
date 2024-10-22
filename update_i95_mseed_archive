@@ -29,32 +29,6 @@ from obspy.clients.fdsn import Client as FDSNClient
 from obspy.clients.fdsn.header import FDSNException
 
 
-# STREAMS = ["EH", "HH", "EL"]
-# COMPONENTS = "ZNE123"
-#
-# # length of analysis window in minutes
-# WINDOW_LENGTH_MINUTES = 10
-# WINDOW_LENGTH = WINDOW_LENGTH_MINUTES * 60
-# # length of buffer before start / after end for preprocessing,
-# # cut off before analysis, in seconds
-# BUFFER_LENGTH = 1 * 60
-# # instrument correction parameters
-# WATER_LEVEL = 10
-# PRE_FILT = (0.05, 0.1, 50, 60)
-# FILTER_PARAMETERS = {
-#     'type': "bandpass",
-#     'freqmin': 0.5,
-#     'freqmax': 30,
-#     'corners': 4,
-#     'zerophase': False,
-#     }
-#
-# OVERWRITE = True
-# SDS_ROOT_MSEED = "/bay200/mseed_online/archive"
-# SDS_ROOT_I95 = "/bay200/I95_0.5-30Hz"
-# FDSN_BASE_URL = "http://jane.geophysik.uni-muenchen.de"
-
-
 DTYPE = np.dtype([('i95', np.float32), ('coverage', np.uint8)])
 I95_PARAM_FILENAME = 'parameters.json'
 I95_TIMES_FILENAME = 'times.npy'
@@ -63,12 +37,10 @@ I95_TIMES_FILENAME = 'times.npy'
 EXAMPLE_PARAMETERS_JSON = """
 {
     "buffer_length": 120,
-    "fdsn_base_url": "http://jane",
+    "fdsn_base_url": "https://erde.geophysik.uni-muenchen.de",
     "inventories": [
-        "/bay200/stationxml_geothermie_extern/clean/SS20S.xml",
-        "/bay200/stationxml_geothermie_extern/clean/WM37S.xml",
-        "/bay200/stationxml_geothermie_extern/clean/ZBS8S.xml",
-        "/bay200/stationxml_geothermie_extern/clean/SWM1S.xml"
+        "/path/to/some/station_metadata.xml",
+        "/path/to/some/station_metadata2.xml"
     ],
     "filter_kwargs": {
         "corners": 4,
@@ -84,7 +56,7 @@ EXAMPLE_PARAMETERS_JSON = """
         60.0
     ],
     "sds_root_waveforms": "/bay200/mseed_online/archive",
-    "water_level": 10.0,
+    "water_level": None,
     "window_length_minutes": 10
 }
 """
@@ -163,19 +135,10 @@ def main(argv=None):
     options.add_argument(
         '-t', '--time', dest='time', required=True,
         help='Year and day to process (e.g. "2017-12-24" or "2017-365").')
-    # options.add_argument(
-    #     '--sds-root-waveforms', dest='sds_root_waveforms', required=True,
-    #     type=str,
-    #     help='Root directory of the SDS directory structure containing the '
-    #          'waveform data (should contain subdirectories with years).')
     options.add_argument(
         '--sds-root-i95', dest='sds_root_i95', required=True, type=str,
         help='Root directory of the SDS directory structure used to store I95 '
              'data.')
-    # options.add_argument(
-    #     '--fdsn-base-url', dest='fdsn_base_url', required=True, type=str,
-    #     help='FDSN base url used in obspy FDSN Client. This server will be '
-    #          'used to fetch station metadata used in deconvolution.')
     options.add_argument(
         '--stream', dest='streams', default=[], action='append', required=True,
         help='Stream to consider (i.e. first two characters of SEED channel '
@@ -215,61 +178,6 @@ def main(argv=None):
         '--logfile-suffix', dest='logfile_suffix', default='', type=str,
         help='Suffix for filename of log file (to log multiple simultaneous '
              'program runs to separate files).')
-
-    # All of this is now handled via the parameter.json file
-    # options = parser.add_argument_group(
-    #     '(Pre-)Processing Options', 'Settings regarding the details of '
-    #     '(pre-)processing. An exception will be raised when trying to add '
-    #     'data to an existing I95 SDS archive and a mismatch of processing '
-    #     'settings is detected.')
-    # options.add_argument(
-    #     '--window-length', dest='window_length_minutes', type=float,
-    #     default=10,
-    #     help='Specifies length of data window the I95 value is based on in '
-    #          'minutes (this is the actual length, buffers will be added on '
-    #          'top of this window and cut off after pre-processing).')
-    # options.add_argument(
-    #     '--buffer-length', dest='buffer_length', type=float,
-    #     default=120,
-    #     help='Specifies length of waveform buffer both before and after '
-    #          'actual window used during preprocessing in seconds.')
-    # options.add_argument(
-    #     '--water-level', dest='water_level', required=True,
-    #     help='Specifies "water_level" option in obspy '
-    #          '"Stream.remove_response()" during preprocessing. Use a float '
-    #          'value or "None" for no water level used in deconvolution.')
-    # options.add_argument(
-    #     '--pre-filt', dest='pre_filt', required=True,
-    #     help='Specifies "pre_filt" option in obspy "Stream.remove_response()" '
-    #          'during preprocessing. Use four comma-separated floats (no '
-    #          'spaces, e.g. "0.05,0.1,50,60") or "None" for no pre filter used '
-    #          'in deconvolution.')
-    # options.add_argument(
-    #     '--filter-type', dest='filter_type', required=True, type=str,
-    #     help='Specifies which filter to use after deconvolution and before '
-    #          'calculating I95. Use either "None", "bandpass", "lowpass" or '
-    #          '"highpass". See obspy Stream.filter().')
-    # options.add_argument(
-    #     '--filter-freq', dest='filter_freq', default=None, type=float,
-    #     help='Specifies "freq" option for used filter. Only used when '
-    #          '"lowpass" or "highpass" is selected.')
-    # options.add_argument(
-    #     '--filter-freqmin', dest='filter_freqmin', default=None, type=float,
-    #     help='Specifies "freqmin" option for used filter. Only used when '
-    #          '"bandpass" is selected.')
-    # options.add_argument(
-    #     '--filter-freqmax', dest='filter_freqmax', default=None, type=float,
-    #     help='Specifies "freqmax" option for used filter. Only used when '
-    #          '"bandpass" is selected.')
-    # options.add_argument(
-    #     '--filter-corners', dest='filter_corners', default=None, type=int,
-    #     help='Specifies "corners" option for used filter.')
-    # options.add_argument(
-    #     '--filter-zerophase', dest='filter_zerophase', default=False,
-    #     action='store_true',
-    #     help='Whether to use a two-pass zero-phase filter (default is no '
-    #          'zero-phase). Filter is applied twice if this option is '
-    #          'selected.')
 
     args = parser.parse_args(argv)
     verbose = args.verbose
