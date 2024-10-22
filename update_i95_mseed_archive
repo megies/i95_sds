@@ -1,9 +1,8 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 Calculate I95 based on SDS waveform archive and FDSN server with station
 metadata and store it in SDS structure in npy format.
 """
-from __future__ import print_function
 import json
 import logging
 import logging.handlers
@@ -92,7 +91,7 @@ def _get_metadata_from_i95_root(directory):
                           dtype=np.int64)
         times_of_day = times - t._ns
         # make info files in I95 SDS root read-only for everybody
-        old_umask = os.umask(0222)
+        old_umask = os.umask(0o222)
         try:
             # store times as plain ndarray in npy
             np.save(i95_times_file, times_of_day)
