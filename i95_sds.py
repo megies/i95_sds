@@ -210,7 +210,7 @@ class I95SDSClient(object):
                     tmp_i95, q=self._smoothing_percentile, axis=1)
                 for row, percentile in zip(tmp_i95, percentiles):
                     row[row > percentile] = np.nan
-            out['i95'] = np.nanmean(tmp_i95, axis=1)
+            out['i95'] = nanmean(tmp_i95, axis=1)
         else:
             out['i95'] = nanpercentile(
                 tmp['i95'], q=self._smoothing_percentile, axis=1)
@@ -476,8 +476,8 @@ class I95SDSClient(object):
 
         if type == 'image':
             # plotting of data parts
-            vmin_global = np.nanmin(data['i95'])
-            # vmax_global = np.nanmax(data['i95'])
+            vmin_global = nanmin(data['i95'])
+            # vmax_global = nanmax(data['i95'])
             vmax_global = nanpercentile(data['i95'],
                                         q=self.vmax_clip_percentile)
             vmin = None
@@ -515,9 +515,9 @@ class I95SDSClient(object):
         scaling_factor, unit_label = _get_scale(scale)
 
         if vmin is None:
-            vmin = np.nanmin(data['i95'] * scaling_factor)
+            vmin = nanmin(data['i95'] * scaling_factor)
         if vmax is None:
-            # vmax = np.nanmax(data['i95'])
+            # vmax = nanmax(data['i95'])
             # clip vmax at given percentile
             # XXX remove this??
             vmax = nanpercentile(data['i95'] * scaling_factor,
@@ -546,7 +546,7 @@ class I95SDSClient(object):
                 cb.set_label('I95 [nm/s]')
         else:
             for i, data_ in enumerate(data[::-1]):
-                vmin = np.nanmin(data_['i95'] * scaling_factor)
+                vmin = nanmin(data_['i95'] * scaling_factor)
                 vmax = nanpercentile(data_['i95'] * scaling_factor,
                                      q=self.vmax_clip_percentile)
                 im = ax.imshow(np.atleast_2d(data_['i95'] * scaling_factor),
@@ -637,20 +637,25 @@ class I95SDSClient(object):
             data = [d['i95'][~d['i95'].mask] * scaling_factor for d in data]
 
         if verbose:
+            percentiles = (50, 68, 80, 90, 95, 99)
+            print(f'# SEEDID  {" ".join(str(p) for p in percentiles)}  percentiles')
             for d, label in zip(data, labels):
-                print(label)
-                for perc in (50, 68, 80, 90, 95, 99):
-                    value = nanpercentile(d, q=perc)
-                    print('  {:d}th percentile: {:6.2f} {}'.format(
-                        perc, value, scale))
+                # work around numpy/numpy#21524
+                if not d.size or np.all(np.isnan(d.filled(np.nan))):
+                    values = [np.nan] * len(percentiles)
+                else:
+                    values = nanpercentile(d, q=percentiles)
+                print(f'{label}  {" ".join(str(v) for v in values)}')
 
         # avoid extreme spikes in the plot
         y_min = np.inf
         y_max = -np.inf
         for i, d in enumerate(data):
+            if not d.size:
+                continue
             value = nanpercentile(d, 95)
             y_max = max(y_max, value)
-            y_min = min(y_min, np.nanmin(d))
+            y_min = min(y_min, nanmin(d))
 
         if isinstance(color, tuple) or isinstance(color, list):
             if len(color) == 4 and len(data) != len(color):
@@ -955,3 +960,25 @@ def nanpercentile(*args, **kwargs):
     arr = arr.copy()
     arr = arr.filled(np.nan)
     return np.nanpercentile(arr, *args[1:], **kwargs)
+
+
+def nanmean(*args, **kwargs):
+    arr = args[0]
+    # if not a masked array, just use numpy out of the box
+    if not isinstance(arr, np.ma.MaskedArray):
+        return np.nanmean(*args, **kwargs)
+    # otherwise copy data for safety and fill masked values with NaN
+    arr = arr.copy()
+    arr = arr.filled(np.nan)
+    return np.nanmean(arr, *args[1:], **kwargs)
+
+
+def nanmin(*args, **kwargs):
+    arr = args[0]
+    # if not a masked array, just use numpy out of the box
+    if not isinstance(arr, np.ma.MaskedArray):
+        return np.nanmin(*args, **kwargs)
+    # otherwise copy data for safety and fill masked values with NaN
+    arr = arr.copy()
+    arr = arr.filled(np.nan)
+    return np.nanmin(arr, *args[1:], **kwargs)
