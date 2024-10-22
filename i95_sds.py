@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os
 import warnings
@@ -15,6 +15,10 @@ from obspy import UTCDateTime
 from obspy.clients.filesystem.sds import Client as SDSClient
 from obspy.imaging.cm import viridis
 from obspy.imaging.util import ObsPyAutoDateFormatter
+
+
+class I95NoDataError(Exception):
+    pass
 
 
 def _filename_to_nanoseconds_start_of_day(filename):
@@ -357,6 +361,11 @@ class I95SDSClient(object):
 
         label = _label_for_used_channels(network, station, location,
                                          used_channels)
+
+        if np.all(np.isnan(data['i95'])):
+            msg = f'No data for {network}.{station}.{location}.{channel}'
+            raise I95NoDataError(msg)
+
         # finally, apply smoothing, if selected
         data = self._smooth(data, out=out)
         return data, sorted(used_channels), label
@@ -656,6 +665,9 @@ class I95SDSClient(object):
             value = nanpercentile(d, 95)
             y_max = max(y_max, value)
             y_min = min(y_min, nanmin(d))
+
+        if np.isnan(y_max) or np.isinf(y_max):
+            raise I95NoDataError()
 
         if isinstance(color, tuple) or isinstance(color, list):
             if len(color) == 4 and len(data) != len(color):
