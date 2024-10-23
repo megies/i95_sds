@@ -422,7 +422,7 @@ class I95SDSClient(object):
                         _filename_to_nanoseconds_start_of_day(filename))
         for key in ('i95', 'coverage'):
             data[key] = data_[key]
-        mask = np.zeros_like(data, dtype=np.bool)
+        mask = np.zeros_like(data, dtype=bool)
         mask |= np.isnan(data['i95'])
         mask |= data['coverage'] == 0
         data = np.ma.masked_array(data, mask=mask)
