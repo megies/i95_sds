@@ -496,7 +496,7 @@ class I95SDSClient(object):
         if ax:
             fig = ax.figure
         else:
-            fig, ax = plt.subplots()
+            fig, ax = plt.subplots(layout="constrained")
 
         if type == 'image':
             # plotting of data parts
@@ -526,7 +526,6 @@ class I95SDSClient(object):
             raise ValueError
 
         fig.autofmt_xdate()
-        fig.tight_layout()
 
         if show:
             plt.show()
@@ -613,8 +612,6 @@ class I95SDSClient(object):
             ax.set_ylabel(label, fontdict=fontdict)
             ax.set_ylim(0, 1)
         ax.figure.autofmt_xdate()
-        if data.ndim == 1 or global_norm:
-            ax.figure.tight_layout()
         ax.figure.canvas.draw_idle()
         return cb
 
@@ -732,7 +729,7 @@ class I95SDSClient(object):
         if ax:
             fig = ax.figure
         else:
-            fig, ax = plt.subplots()
+            fig, ax = plt.subplots(layout="constrained")
 
         if type == 'image':
             self._plot_image(ax, data, label, cmap=cmap, scale=scale)
@@ -745,8 +742,6 @@ class I95SDSClient(object):
         else:
             msg = "option 'type' must be either 'image', 'line' or 'violin'"
             raise ValueError(msg)
-
-        fig.tight_layout()
 
         if show:
             plt.show()
@@ -852,7 +847,7 @@ class I95SDSClient(object):
         if ax:
             fig = ax.figure
         else:
-            fig, ax = plt.subplots()
+            fig, ax = plt.subplots(layout="constrained")
 
         # for detailed plot, we mask days that were not even computed, so that
         # they show up gray like in the fast plot
@@ -889,8 +884,6 @@ class I95SDSClient(object):
         if not fast:
             cb = fig.colorbar(mappable=im, ax=ax)
             cb.set_label('Daily data coverage [%]')
-
-        fig.tight_layout()
 
         if show:
             plt.show()
