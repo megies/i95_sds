@@ -15,6 +15,12 @@ from obspy.clients.filesystem.sds import Client as SDSClient
 from obspy.imaging.cm import viridis
 from obspy.imaging.util import ObsPyAutoDateFormatter
 
+try:
+    import seaborn as sns
+except ImportError:
+    print("Can not import module 'seaborn'. Violin plots will not work "
+          "unless it gets installed.")
+
 
 class I95NoDataError(Exception):
     pass
@@ -630,7 +636,6 @@ class I95SDSClient(object):
 
     def _plot_violin(self, ax, data, labels, verbose=False, percentiles=None,
                      scale=None, color=None, violin_kwargs=None):
-        import seaborn as sns
 
         if violin_kwargs is None:
             violin_kwargs = {}
