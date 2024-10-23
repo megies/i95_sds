@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm, Normalize
 from matplotlib.cm import get_cmap
 from matplotlib.dates import date2num
-from matplotlib.transforms import blended_transform_factory
 
 import numpy as np
 
@@ -381,7 +380,7 @@ class I95SDSClient(object):
         """
         try:
             filesize = os.path.getsize(filename)
-        except:
+        except Exception:
             # should not happen, as only existing filenames are
             # returned by obspy SDS Client looks like
             return -1
@@ -421,7 +420,8 @@ class I95SDSClient(object):
         # print(data)
         return data
 
-    def get_data_multiple_nslc(self, nslc, starttime, endtime, merge_streams=True):
+    def get_data_multiple_nslc(self, nslc, starttime, endtime,
+                               merge_streams=True):
         used_channels = []
         labels = []
         # due to smoothing we only really know the shape of the resulting array
@@ -647,7 +647,8 @@ class I95SDSClient(object):
 
         if verbose:
             percentiles = (50, 68, 80, 90, 95, 99)
-            print(f'# SEEDID  {" ".join(str(p) for p in percentiles)}  percentiles')
+            print(f'# SEEDID  {" ".join(str(p) for p in percentiles)}  '
+                  f'percentiles')
             for d, label in zip(data, labels):
                 # work around numpy/numpy#21524
                 if not d.size or np.all(np.isnan(d.filled(np.nan))):
