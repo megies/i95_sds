@@ -247,11 +247,15 @@ def main(argv=None):
     sds_client_mseed = SDSClient(params['sds_root_waveforms'])
     if params['fdsn_base_url'] is None:
         fdsn_client = None
+        msg = 'No FDSN server specified.'
+        logger.info(msg)
     else:
         fdsn_client = FDSNClient(params['fdsn_base_url'])
+        msg = f'Connected to FDSN server at {params["fdsn_base_url"]}.'
+        logger.info(msg)
     sds_client_npy = SDSClient(args.sds_root_i95)
     sds_client_npy.FMTSTR += ".npy"
-    msg = 'Connected SDS/FDSN clients.'
+    msg = f'Connected SDS clients at {args.sds_root_i95}.'
     logger.info(msg)
     if verbose:
         print(msg)
@@ -260,6 +264,8 @@ def main(argv=None):
         inv_all = fdsn_client.get_stations(
             level='channel', format='text', starttime=t - 100,
             endtime=t_end + 100)
+        msg = 'Fetched station inventory summary from FDSN client.'
+        logger.info(msg)
     else:
         inv_all = Inventory(networks=[], source='')
     if 'inventories' in params and params['inventories']:
@@ -267,10 +273,10 @@ def main(argv=None):
         for path in params['inventories']:
             inv_local_files += read_inventory(path, format='STATIONXML')
         inv_all += inv_local_files
+        msg = 'Read station inventory from local files.'
+        logger.info(msg)
     else:
         inv_local_files = None
-    msg = 'Fetched station inventory summary from FDSN client.'
-    logger.info(msg)
     if verbose:
         print(msg)
 
