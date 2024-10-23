@@ -841,7 +841,7 @@ class I95SDSClient(object):
             norm = BoundaryNorm(bounds, cmap.N)
         else:
             if number_of_colors is None:
-                cmap = 'viridis'
+                cmap = get_cmap('viridis')
             else:
                 cmap = get_cmap('viridis', lut=number_of_colors)
             norm = Normalize(vmin=vmin, vmax=vmax)
