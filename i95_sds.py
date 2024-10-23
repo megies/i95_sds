@@ -564,9 +564,6 @@ class I95SDSClient(object):
                            extent=[start, end, 0, data.shape[0]], vmin=vmin,
                            vmax=vmax, cmap=cmap, interpolation='nearest',
                            aspect='auto')
-            if colorbar:
-                cb = plt.colorbar(mappable=im, ax=ax)
-                cb.set_label('I95 [nm/s]')
         else:
             for i, data_ in enumerate(data[::-1]):
                 vmin = nanmin(data_['i95'] * scaling_factor)
@@ -576,7 +573,27 @@ class I95SDSClient(object):
                                extent=[start, end, 0 + i, 1 + i], vmin=vmin,
                                vmax=vmax, cmap=cmap, interpolation='nearest',
                                aspect='auto')
-            if colorbar:
+
+        # fig/ax tweaks
+        ax.xaxis_date()
+        ax.xaxis.set_major_formatter(
+            ObsPyAutoDateFormatter(ax.xaxis.get_major_locator()))
+        ax.set_yticks([])
+        fontdict = {'family': 'monospace'}
+        if data.ndim > 1:
+            ax.set_yticks(np.arange(data.shape[0], dtype=np.float32) + 0.5)
+            ax.set_yticklabels(label[::-1], fontdict=fontdict)
+            ax.set_ylim(0, data.shape[0])
+        else:
+            ax.set_ylabel(label, fontdict=fontdict)
+            ax.set_ylim(0, 1)
+        ax.figure.autofmt_xdate()
+
+        if colorbar:
+            if data.ndim == 1 or global_norm:
+                cb = plt.colorbar(mappable=im, ax=ax)
+                cb.set_label('I95 [nm/s]')
+            else:
                 # make room for colorbars, shrink axes
                 ax_rect = list(ax.get_position().bounds)
                 ax_rect[0] += 0.10
@@ -598,20 +615,6 @@ class I95SDSClient(object):
                     cb = plt.colorbar(mappable=im, cax=cax)
                     cb.set_label('I95 [%s]' % unit_label)
 
-        # fig/ax tweaks
-        ax.xaxis_date()
-        ax.xaxis.set_major_formatter(
-            ObsPyAutoDateFormatter(ax.xaxis.get_major_locator()))
-        ax.set_yticks([])
-        fontdict = {'family': 'monospace'}
-        if data.ndim > 1:
-            ax.set_yticks(np.arange(data.shape[0], dtype=np.float32) + 0.5)
-            ax.set_yticklabels(label[::-1], fontdict=fontdict)
-            ax.set_ylim(0, data.shape[0])
-        else:
-            ax.set_ylabel(label, fontdict=fontdict)
-            ax.set_ylim(0, 1)
-        ax.figure.autofmt_xdate()
         ax.figure.canvas.draw_idle()
         return cb
 
