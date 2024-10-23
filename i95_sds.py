@@ -276,6 +276,9 @@ class I95SDSClient(object):
 
     def get_data(self, network, station, location, channel, starttime,
                  endtime, out=None, merge_streams=True):
+        starttime = UTCDateTime(starttime)
+        endtime = UTCDateTime(endtime)
+
         used_channels = set([channel])
 
         filenames = self._get_filenames(network, station, location, channel,
@@ -428,6 +431,9 @@ class I95SDSClient(object):
 
     def get_data_multiple_nslc(self, nslc, starttime, endtime,
                                merge_streams=True):
+        starttime = UTCDateTime(starttime)
+        endtime = UTCDateTime(endtime)
+
         used_channels = []
         labels = []
         # due to smoothing we only really know the shape of the resulting array
@@ -463,6 +469,9 @@ class I95SDSClient(object):
         :param type: ``'image'``, ``'line'`` or ``'violin'``
         :param scale: ``'nm/s'``, ``'mum/s'``, ``'mm/s'``, ``'m/s'``
         """
+        starttime = UTCDateTime(starttime)
+        endtime = UTCDateTime(endtime)
+
         if type not in ('image', 'line', 'violin'):
             msg = "option 'type' must be either 'image', 'line' or 'violin'"
             raise ValueError(msg)
@@ -714,6 +723,9 @@ class I95SDSClient(object):
         :type percentiles: list of float
         :param scale: ``'nm/s'``, ``'mum/s'``, ``'mm/s'``, ``'m/s'``
         """
+        starttime = UTCDateTime(starttime)
+        endtime = UTCDateTime(endtime)
+
         data, used_channels, label = self.get_data(
             network, station, location, channel, starttime, endtime)
 
@@ -801,6 +813,9 @@ class I95SDSClient(object):
                           merge_streams=False, show=True, grid=True, ax=None,
                           verbose=False, vmin=0, vmax=100,
                           number_of_colors=None, percentage_in_label=True):
+        starttime = UTCDateTime(starttime)
+        endtime = UTCDateTime(endtime)
+
         data, labels = self._get_availability(
             starttime, endtime, fast=fast, merge_streams=merge_streams)
 
