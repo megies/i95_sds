@@ -59,7 +59,7 @@ EXAMPLE_PARAMETERS_JSON = """
         60.0
     ],
     "sds_root_waveforms": "/bay200/mseed_online/archive",
-    "water_level": None,
+    "water_level": null,
     "window_length_minutes": 10
 }
 """
@@ -382,13 +382,10 @@ def main(argv=None):
                 tr.detrend("demean")
                 tr.taper(type="cosine", max_percentage=None,
                          max_length=params['buffer_length'] * 0.8, side="both")
-                try:
-                    tr.remove_response(
-                        inventory=inv, output="VEL",
-                        water_level=params['water_level'],
-                        pre_filt=params['pre_filt'], zero_mean=False, taper=False)
-                except:
-                    import pdb; pdb.set_trace()
+                tr.remove_response(
+                    inventory=inv, output="VEL",
+                    water_level=params['water_level'],
+                    pre_filt=params['pre_filt'], zero_mean=False, taper=False)
                 if debug:
                     _plot_debug_image(t_, j, tr, '1_deconvolved',
                                       args.sds_root_i95)
