@@ -74,8 +74,7 @@ def _get_metadata_from_i95_root(directory):
     i95_times_file = os.path.join(directory, I95_TIMES_FILENAME)
     # read processing parameters
     with open(i95_param_file, 'rb') as fh:
-        json_string = fh.read().decode('ASCII')
-    params = json.loads(json_string, encoding='ASCII')
+        params = json.load(fh)
 
     # read times-of-day
     if os.path.exists(i95_times_file):
