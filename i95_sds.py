@@ -810,7 +810,7 @@ class I95SDSClient(object):
     def plot_availability(self, starttime, endtime, fast=True,
                           merge_streams=False, show=True, grid=True, ax=None,
                           verbose=False, vmin=0, vmax=100,
-                          number_of_colors=None, percentage_in_label=True):
+                          number_of_colors=None, percentage_in_label=False):
         starttime = UTCDateTime(starttime)
         endtime = UTCDateTime(endtime)
 
