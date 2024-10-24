@@ -1,0 +1,14 @@
+2024-10-23 16:26:24,339 INFO     Processing 2024-294
+2024-10-23 16:26:24,339 INFO     No FDSN server specified.
+2024-10-23 16:26:24,339 INFO     Connected SDS clients at /tmp/I95.
+2024-10-23 16:26:24,494 INFO     Read station inventory from local files.
+2024-10-23 16:26:24,495 INFO     Processing the following SEED IDs: BW.FFB1..BHZ BW.FFB1..BH2 BW.FFB1..BH1
+2024-10-23 16:26:24,495 INFO     Processing SEED ID BW.FFB1..BH1  (1/3)
+2024-10-23 16:26:24,495 INFO     Found response information in data from local inventory files.
+2024-10-23 16:26:24,495 INFO     144 windows to process
+2024-10-23 16:26:34,028 INFO     Processing SEED ID BW.FFB1..BH2  (2/3)
+2024-10-23 16:26:34,029 INFO     Found response information in data from local inventory files.
+2024-10-23 16:26:34,029 INFO     144 windows to process
+2024-10-23 16:26:43,321 INFO     Processing SEED ID BW.FFB1..BHZ  (3/3)
+2024-10-23 16:26:43,321 INFO     Found response information in data from local inventory files.
+2024-10-23 16:26:43,321 INFO     144 windows to process

@@ -1,0 +1,23 @@
+{
+    "buffer_length": 120,
+    "fdsn_base_url": null,
+    "inventories": [
+        "./station_BW_FFB1.xml"
+    ],
+    "filter_kwargs": {
+        "corners": 4,
+        "freqmax": 10.0,
+        "freqmin": 1.0,
+        "type": "bandpass",
+        "zerophase": false
+    },
+    "pre_filt": [
+        0.05,
+        0.1,
+        15.0,
+        20.0
+    ],
+    "sds_root_waveforms": "./waveforms",
+    "water_level": null,
+    "window_length_minutes": 10
+}
