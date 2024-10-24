@@ -88,4 +88,6 @@ client.plot_all_data('2024-294', '2024-294', type='violin')
 
 Note that violin plots use the `seaborn` module wich can be installed using e.g. `conda` or `pip`.
 
-## Example Plots
+### Example Plots
+
+The subfolder `example` contains a minimal example with raw data and processed I95 data as well as some basic plots.
