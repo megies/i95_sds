@@ -2,6 +2,8 @@
 
 Calculate, store and on demand plot [I95](https://doi.org/10.1111/j.1365-246X.2009.04343.x) noise levels of seismic data stored in a local SDS directory tree. The main idea is to keep it simple and easily automatable to process data on a regular basis in the background to then have an easy way to tap into the pre-computed noise data on demand.
 
+DOI: [10.5281/zenodo.13987081](https://doi.org/10.5281/zenodo.13987081)
+
 ## Usage
 
 There are two files in this project. One is used to calculate I95 values and store them in a [SDS](https://www.seiscomp.de/seiscomp3/doc/applications/slarchive/SDS.html)(-like) structure and one is used to visualize I95 noise levels based on the previously computed data. Simply download the github repository or `git clone` it (which helps with tracking changes if making any customizations in the code).
