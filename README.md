@@ -91,3 +91,10 @@ Note that violin plots use the `seaborn` module wich can be installed using e.g.
 ### Example Plots
 
 The subfolder `example` contains a minimal example with raw data and processed I95 data as well as some basic plots.
+
+![image1](example/images/i95_example1_individual_image.png)
+![image2](example/images/i95_example2_individual_violin.png)
+![image3](example/images/i95_example3_individual_line.png)
+![image4](example/images/i95_example4_availability.png)
+![image5](example/images/i95_example5_multiple_image.png)
+![image6](example/images/i95_example6_multiple_violin.png)
