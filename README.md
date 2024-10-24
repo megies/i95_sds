@@ -20,7 +20,7 @@ Create a directory to store the computed I95 data:
 $ mkdir /tmp/I95
 ```
 
-Create a [JSON](https://www.json.org/) file with parameters for the processing. This file **should remain unchanged** after starting to process data, at least in terms of the actual signal processing parameters (filter, deconvolution, ...) because there is **no way to tell later on what individual daily I95 file was processed with what settings if the settings change**. Of course other paramters that do not affect the signal processing (waveform path, FDSN URL, ...) could be changed if needed without changing the signal processing aspect. An example file content to copy/paste can be shown by calling the script with that empty directory as a target:
+Create a [JSON](https://www.json.org/) file with parameters for the processing. This file **should remain unchanged** after starting to process data, at least in terms of the actual signal processing parameters (filter, deconvolution, ...) because there is **no way to tell later on what settings were in place when an individual daily I95 file was processed if the settings change**. Of course other paramters that do not affect the signal processing (waveform path, FDSN URL, ...) could be changed if needed without changing the signal processing aspect. An example file content to copy/paste can be shown by calling the script with that empty directory as a target:
 
 ```shell
 $ ./update_i95_mseed_archive --sds-root-i95 /tmp/I95 -t 2024-234 --stream HH
@@ -42,7 +42,7 @@ What data gets processed depends on two things:
     - `--station-code` (optional): this parameter can be used to restrict processing to certain station codes and can be given multiple times. If not specified all station codes will get processed
   - station metadata fetched at time of processing:
     - if `"fdsn_base_url"` is set with an URL to a FDSN server, the server gets queried for **all** available metadata and only the above filters will get applied otherwise all retrieved stations/channels will get processed. To not fetch station metadata and only rely on user controlled station metadata file(s), set `"fdsn_base_url": null,` in the JSON file.
-    - station metadata given in local file(s) readable with ObsPy. Again all info found will get processed unless restricted with above command line filters
+    - station metadata given in local file(s) readable with ObsPy with JSON parameter `"inventories"`. Again all info found will get processed unless restricted with above command line filters
 
 The program operates in daily chunks and by default, data that was (tried to be) processed at some point will simply be skipped unless `--overwrite` is specified, even if no data could be produced (in which case a "magic" 1-byte file is created to represent a processed day for which no raw data was available).
 
