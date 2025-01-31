@@ -660,15 +660,15 @@ class I95SDSClient(object):
             data = [d['i95'][~d['i95'].mask] * scaling_factor for d in data]
 
         if verbose:
-            percentiles = (50, 68, 80, 90, 95, 99)
-            print(f'# SEEDID  {" ".join(str(p) for p in percentiles)}  '
+            percentiles_tmp = (50, 68, 80, 90, 95, 99)
+            print(f'# SEEDID    {" ".join(str(p) for p in percentiles_tmp)}  '
                   f'percentiles')
             for d, label in zip(data, labels):
                 # work around numpy/numpy#21524
                 if not d.size or np.all(np.isnan(d.filled(np.nan))):
-                    values = [np.nan] * len(percentiles)
+                    values = [np.nan] * len(percentiles_tmp)
                 else:
-                    values = nanpercentile(d, q=percentiles)
+                    values = nanpercentile(d, q=percentiles_tmp)
                 print(f'{label}  {" ".join(str(v) for v in values)}')
 
         # avoid extreme spikes in the plot
