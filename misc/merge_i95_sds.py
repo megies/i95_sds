@@ -42,7 +42,7 @@ fromtimestamp = datetime.datetime.fromtimestamp
 
 # logfile
 now_str = datetime.datetime.now().strftime('%Y-%m-%dT%H%M%S')
-logfile = Path(f'/tmp/I95_merge_{now_str}.log')
+logfile = main / f'merge_{now_str}.log'
 print(f'Logging to file: {logfile}')
 
 
