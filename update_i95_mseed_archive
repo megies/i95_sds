@@ -26,6 +26,7 @@ from argparse import ArgumentParser, RawDescriptionHelpFormatter
 
 import numpy as np
 
+import obspy
 from obspy import UTCDateTime, Inventory, read_inventory
 from obspy.clients.filesystem.sds import Client as SDSClient
 from obspy.clients.fdsn import Client as FDSNClient
@@ -362,7 +363,13 @@ def main(argv=None):
             t2 = UTCDateTime(ns=t_) + (window_length / 2.0)
             t0 = t1 - params['buffer_length']
             t3 = t2 + params['buffer_length']
-            st = sds_client_mseed.get_waveforms(net, sta, loc, cha, t0, t3)
+            try:
+                st = sds_client_mseed.get_waveforms(net, sta, loc, cha, t0, t3)
+            except obspy.io.mseed.InternalMSEEDError as e:
+                msg = (f'MSEEDError fetching waveform data for '
+                       f'{net}.{sta}.{loc}.{cha} at {t1}: {e}')
+                logger.info(msg)
+                continue
             # cleanup merge..
             st.merge(-1)
             # now throw away gaps..
