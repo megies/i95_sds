@@ -723,7 +723,7 @@ class I95SDSClient(object):
                     ax.plot([xmin, xmax], [value, value], color='k', zorder=5)
                     ax.text(xmin + margin, value, '%s%%' % perc, ha='left',
                             **kwargs)
-                    ax.text(xmax - margin, value, '%#.2g' % value, ha='right',
+                    ax.text(xmax - margin, value, '%#0f' % value, ha='right',
                             **kwargs)
 
         # fig/ax tweaks
