@@ -279,7 +279,16 @@ class I95SDSClient(object):
         starttime = UTCDateTime(starttime)
         endtime = UTCDateTime(endtime)
 
-        used_channels = set([channel])
+        if isinstance(channel, str):
+            used_channels = set([channel])
+        elif isinstance(channel, (list, tuple)):
+            used_channels = set(channel)
+        elif isinstance(channel, set):
+            used_channels = channel
+        else:
+            msg = ("Expecting 'channel' to be a string or a list/tuple/set "
+                   "of strings.")
+            raise TypeError(msg)
 
         filenames = self._get_filenames(network, station, location, channel,
                                         starttime, endtime,
