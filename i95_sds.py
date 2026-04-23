@@ -767,8 +767,14 @@ class I95SDSClient(object):
             self._plot_violin(ax, data, label, verbose=verbose,
                               percentiles=percentiles, scale=scale,
                               color=color, violin_kwargs=violin_kwargs)
+        elif type == 'combined':
+            self._plot_lines(ax[0], data, label, scale=scale, color=color)
+            self._plot_violin(ax[1], data, '', verbose=verbose,
+                              percentiles=percentiles, scale=scale,
+                              color=color, violin_kwargs=violin_kwargs)
         else:
-            msg = "option 'type' must be either 'image', 'line' or 'violin'"
+            msg = ("option 'type' must be either 'image', 'line', 'violin' or "
+                   "'combined'")
             raise ValueError(msg)
 
         if show:
