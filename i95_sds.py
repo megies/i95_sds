@@ -385,6 +385,12 @@ class I95SDSClient(object):
 
         # finally, apply smoothing, if selected
         data = self._smooth(data, out=out)
+        if verbose:
+            if np.ma.is_masked(data["coverage"]):
+                overall_availability = np.mean(data["coverage"].filled(0))
+            else:
+                overall_availability = np.mean(data["coverage"])
+            print(f'{label} availability {overall_availability:6.2f}')
         return data, sorted(used_channels), label
 
     @staticmethod
