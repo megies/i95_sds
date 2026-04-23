@@ -671,10 +671,7 @@ class I95SDSClient(object):
         if verbose:
             percentiles_tmp = (50, 68, 80, 90, 95, 99)
             label_maxlen = max(len(label) for label in labels)
-            seed_id_info = '# SEED ID'.ljust(label_maxlen)
-            percentile_info = (str(p).ljust(8) for p in percentiles_tmp)
-            print(f'{seed_id_info}  {" ".join(percentile_info)}  '
-                  f'percentiles')
+            percentiles_string = '/'.join(str(p) for p in percentiles_tmp)
             for d, label in zip(data, labels):
                 # work around numpy/numpy#21524
                 if not d.size or np.all(np.isnan(d.filled(np.nan))):
@@ -682,8 +679,9 @@ class I95SDSClient(object):
                 else:
                     values = nanpercentile(d, q=percentiles_tmp)
                     label_string = label.ljust(label_maxlen)
-                value_strings = (f'{x:<8.3g}' for x in values)
-                print(f'{label_string}  {" ".join(value_strings)}')
+                values_string = '/'.join(f'{x:.3g}' for x in values)
+                print(f'{label_string} percentiles {unit_label} '
+                      f'{values_string} {percentiles_string}')
 
         # avoid extreme spikes in the plot
         y_min = np.inf
