@@ -748,6 +748,11 @@ class I95SDSClient(object):
         data, used_channels, label = self.get_data(
             network, station, location, channel, starttime, endtime,
             verbose=verbose)
+        if np.all(data.mask['i95']):
+            seed_id = '.'.join((network, station, location, channel))
+            msg = (f"No data for SEED ID '{seed_id}' in time range "
+                   F"{starttime} to {endtime}")
+            raise I95NoDataError(msg)
 
         if ax:
             fig = ax.figure
