@@ -275,7 +275,7 @@ class I95SDSClient(object):
         return nslc_new
 
     def get_data(self, network, station, location, channel, starttime,
-                 endtime, out=None, merge_streams=True):
+                 endtime, out=None, merge_streams=True, verbose=False):
         starttime = UTCDateTime(starttime)
         endtime = UTCDateTime(endtime)
 
@@ -439,7 +439,7 @@ class I95SDSClient(object):
         return data
 
     def get_data_multiple_nslc(self, nslc, starttime, endtime,
-                               merge_streams=True):
+                               merge_streams=True, verbose=False):
         starttime = UTCDateTime(starttime)
         endtime = UTCDateTime(endtime)
 
@@ -454,7 +454,7 @@ class I95SDSClient(object):
                 out = data[i]
             smoothed_1d, used_channels_, label = self.get_data(
                 n, s, l, c, starttime, endtime, out=out,
-                merge_streams=merge_streams)
+                merge_streams=merge_streams, verbose=verbose)
             if i == 0:
                 data = np.ma.empty((len(nslc), len(smoothed_1d)),
                                    dtype=self.dtype)
@@ -492,7 +492,8 @@ class I95SDSClient(object):
             nslc = self._merge_streams_in_nslc(nslc)
 
         data, used_channels, labels = self.get_data_multiple_nslc(
-            nslc, starttime, endtime, merge_streams=merge_streams)
+            nslc, starttime, endtime, merge_streams=merge_streams,
+            verbose=verbose)
 
         # remove ids that have no data in given time range
         valid = [i for i, d in enumerate(data)
@@ -739,7 +740,8 @@ class I95SDSClient(object):
         endtime = UTCDateTime(endtime)
 
         data, used_channels, label = self.get_data(
-            network, station, location, channel, starttime, endtime)
+            network, station, location, channel, starttime, endtime,
+            verbose=verbose)
 
         if ax:
             fig = ax.figure
