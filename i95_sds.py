@@ -541,7 +541,12 @@ class I95SDSClient(object):
         else:
             raise ValueError
 
-        fig.autofmt_xdate()
+        with warnings.catch_warnings():
+            msg = ('This figure was using a layout engine that is '
+                   'incompatible with subplots_adjust')
+            warnings.filterwarnings('ignore', message=msg,
+                                    category=UserWarning)
+            fig.autofmt_xdate()
 
         if show:
             plt.show()
@@ -603,7 +608,12 @@ class I95SDSClient(object):
         else:
             ax.set_ylabel(label, fontdict=fontdict)
             ax.set_ylim(0, 1)
-        ax.figure.autofmt_xdate()
+        with warnings.catch_warnings():
+            msg = ('This figure was using a layout engine that is '
+                   'incompatible with subplots_adjust')
+            warnings.filterwarnings('ignore', message=msg,
+                                    category=UserWarning)
+            ax.figure.autofmt_xdate()
 
         if colorbar:
             if data.ndim == 1 or global_norm:
@@ -656,7 +666,12 @@ class I95SDSClient(object):
         ax.xaxis_date()
         ax.xaxis.set_major_formatter(
             ObsPyAutoDateFormatter(ax.xaxis.get_major_locator()))
-        ax.figure.autofmt_xdate()
+        with warnings.catch_warnings():
+            msg = ('This figure was using a layout engine that is '
+                   'incompatible with subplots_adjust')
+            warnings.filterwarnings('ignore', message=msg,
+                                    category=UserWarning)
+            ax.figure.autofmt_xdate()
         ax.figure.canvas.draw_idle()
 
     def _plot_violin(self, ax, data, labels, verbose=False, percentiles=None,
@@ -913,7 +928,12 @@ class I95SDSClient(object):
         ax.xaxis_date()
         ax.xaxis.set_major_formatter(
             ObsPyAutoDateFormatter(ax.xaxis.get_major_locator()))
-        fig.autofmt_xdate()
+        with warnings.catch_warnings():
+            msg = ('This figure was using a layout engine that is '
+                   'incompatible with subplots_adjust')
+            warnings.filterwarnings('ignore', message=msg,
+                                    category=UserWarning)
+            fig.autofmt_xdate()
 
         if not fast:
             cb = fig.colorbar(mappable=im, ax=ax)
