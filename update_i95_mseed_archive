@@ -441,7 +441,11 @@ def main(argv=None):
         logger.info(msg)
         if verbose:
             print(msg)
-        _process(net, sta, loc, cha, t, times, params, verbose=verbose)
+        try:
+            _process(net, sta, loc, cha, t, times, params, verbose=verbose)
+        except Exception as e:
+            logger.critical(str(e))
+            logger.critical(traceback.format_tb(e.__traceback__))
 
 
 if __name__ == '__main__':
