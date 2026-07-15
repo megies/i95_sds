@@ -434,6 +434,7 @@ def main(argv=None):
 
         _write_result_npy(npy_file, data)
 
+    errors = False
     total = len(nslc)
     for i, (net, sta, loc, cha) in enumerate(sorted(nslc)):
         msg = 'Processing SEED ID {}  ({!s}/{!s})'.format(
@@ -444,9 +445,13 @@ def main(argv=None):
         try:
             _process(net, sta, loc, cha, t, times, params, verbose=verbose)
         except Exception as e:
+            errors = True
             logger.critical(str(e))
             logger.critical(traceback.format_tb(e.__traceback__))
+    return errors
 
 
 if __name__ == '__main__':
-    main()
+    errors = main()
+    if errors:
+        sys.exit(1)
